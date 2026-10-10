@@ -5,21 +5,15 @@
 #include <string>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(MotecCdl3TachometerConfig_t,
     (uint32_t, max_rpm, 6000,
         "Maximum RPM", "Full-scale reading; sets how many segments the bar spans"),
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
-        "Schema Type", "Data schema type for the subscription"),
-    (std::string, rpm_expression, "",
-        "RPM Expression", "Expression evaluated against the message to produce engine RPM"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, stale_after_ms, 0,
-        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
+    (pub_sub::subscription_t, rpm, pub_sub::subscriptionFor(pub_sub::schema_type_t::EngineRpm),
+        "RPM", "Engine speed: topic, schema, expression and loss-of-comm timeout")
 )
 
 // max_rpm is the divisor for the segment count and the bound on the tick loop
@@ -29,7 +23,6 @@ inline std::vector<std::string> validate(MotecCdl3TachometerConfig_t& cfg)
 {
     std::vector<std::string> notes;
     config_codec::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
-    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     return notes;
 }
 

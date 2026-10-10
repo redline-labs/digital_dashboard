@@ -13,12 +13,14 @@ windows:
         config:
           odometer_value: 123456
           max_speed: 160
-          zenoh_key: vehicle/speed_mps
-          schema_type: VehicleSpeed
-          speed_expression: mps_to_mph(speedMps)
-          odometer_expression: totalMiles
-          odometer_zenoh_key: vehicle/odometer
-          odometer_schema_type: VehicleOdometer
+          speed:
+            zenoh_key: vehicle/speed_mps
+            schema_type: VehicleSpeed
+            expression: mps_to_mph(speedMps)
+          odometer:
+            zenoh_key: vehicle/odometer
+            schema_type: VehicleOdometer
+            expression: totalMiles
           shift_box_markers:
             - 28
             - 54
@@ -32,9 +34,10 @@ windows:
           max_rpm: 8000
           redline_rpm: 7000
           show_clock: true
-          zenoh_key: vehicle/engine/rpm
-          schema_type: EngineRpm
-          rpm_expression: rpm
+          rpm:
+            zenoh_key: vehicle/engine/rpm
+            schema_type: EngineRpm
+            expression: rpm
       - x: 38
         y: 662
         width: 30
@@ -44,9 +47,10 @@ windows:
           telltale_type: battery
           warning_color: "#FF0000"
           normal_color: "#333333"
-          zenoh_key: vehicle/telltales/battery_warning
-          schema_type: BatteryWarning
-          condition_expression: batteryVoltage < 12.0
+          condition:
+            zenoh_key: vehicle/telltales/battery_warning
+            schema_type: BatteryWarning
+            expression: batteryVoltage < 12.0
       - x: 79
         y: 663
         width: 30
@@ -56,9 +60,10 @@ windows:
           telltale_type: brake_system
           warning_color: "#FF0000"
           normal_color: "#333333"
-          zenoh_key: vehicle/telltales/battery_warning
-          schema_type: BatteryWarning
-          condition_expression: batteryVoltage < 12.0
+          condition:
+            zenoh_key: vehicle/telltales/battery_warning
+            schema_type: BatteryWarning
+            expression: batteryVoltage < 12.0
       - x: 120
         y: 663
         width: 30
@@ -68,9 +73,10 @@ windows:
           telltale_type: high_beam
           warning_color: "#FF0000"
           normal_color: "#333333"
-          zenoh_key: vehicle/telltales/battery_warning
-          schema_type: BatteryWarning
-          condition_expression: batteryVoltage < 12.0
+          condition:
+            zenoh_key: vehicle/telltales/battery_warning
+            schema_type: BatteryWarning
+            expression: batteryVoltage < 12.0
       - x: 159
         y: 663
         width: 30
@@ -80,9 +86,10 @@ windows:
           telltale_type: windshield_washer
           warning_color: "#FF0000"
           normal_color: "#333333"
-          zenoh_key: vehicle/telltales/battery_warning
-          schema_type: BatteryWarning
-          condition_expression: batteryVoltage < 12.0
+          condition:
+            zenoh_key: vehicle/telltales/battery_warning
+            schema_type: BatteryWarning
+            expression: batteryVoltage < 12.0
       - x: 20
         y: 11
         width: 613
@@ -92,27 +99,31 @@ windows:
           fuel_gauge:
             min_value: 0
             max_value: 100
-            zenoh_key: vehicle/speed_mps
-            schema_type: VehicleSpeed
-            value_expression: speedMps
+            source:
+              zenoh_key: vehicle/speed_mps
+              schema_type: VehicleSpeed
+              expression: speedMps
           right_gauge:
             min_value: 0
             max_value: 3
-            zenoh_key: vehicle/speed_mps
-            schema_type: VehicleSpeed
-            value_expression: psi_to_bar(speedMps)
+            source:
+              zenoh_key: vehicle/speed_mps
+              schema_type: VehicleSpeed
+              expression: psi_to_bar(speedMps)
           bottom_gauge:
             min_value: 0
             max_value: 80
-            zenoh_key: vehicle/engine/temperature_celsius
-            schema_type: EngineTemperature
-            value_expression: temperatureCelsius
+            source:
+              zenoh_key: vehicle/engine/temperature_celsius
+              schema_type: EngineTemperature
+              expression: temperatureCelsius
           left_gauge:
             min_value: 40
             max_value: 120
-            zenoh_key: vehicle/engine/temperature_celsius
-            schema_type: EngineTemperature
-            value_expression: temperatureCelsius
+            source:
+              zenoh_key: vehicle/engine/temperature_celsius
+              schema_type: EngineTemperature
+              expression: temperatureCelsius
           economy_sweep:
             label: ECONOMY
             red_start_fraction: 0.6

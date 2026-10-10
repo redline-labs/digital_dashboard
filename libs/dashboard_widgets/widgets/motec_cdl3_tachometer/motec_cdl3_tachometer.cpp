@@ -40,10 +40,8 @@ MotecCdl3Tachometer::MotecCdl3Tachometer(const MotecCdl3TachometerConfig_t& cfg,
     // Load segmented display font (DSEG)
     _segmentFont = QFont(qt_helpers::loadResourceFont(":/fonts/DSEG7Classic-Bold.ttf", "Helvetica"), 10, QFont::Bold);
 
-    _expression_parser = dashboard::makeExpressionSubscription<float>(
-        _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
-        this, &MotecCdl3Tachometer::setRpm, 
-        std::chrono::milliseconds(_cfg.stale_after_ms));
+    _expression_parser =
+        dashboard::makeExpressionSubscription<float>(_cfg.rpm, this, &MotecCdl3Tachometer::setRpm);
     // Why: Precompute a LUT and static geometry so drawing stays O(segments)
     // with consistent visual spacing, regardless of widget size.
     buildArcLUT();

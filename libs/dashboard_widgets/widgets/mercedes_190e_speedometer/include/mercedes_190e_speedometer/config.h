@@ -6,6 +6,7 @@
 #include <vector>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
@@ -15,30 +16,16 @@ REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,
         "Odometer Reading", "Starting reading for the six-digit odometer"),
     (uint16_t, max_speed, 125,
         "Maximum Speed", "Full-scale reading at the end of the dial"),
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Speed Zenoh Key", "Zenoh topic key the road speed is read from"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
-        "Speed Schema Type", "Data schema type for the speed subscription"),
-    (std::string, speed_expression, "",
-        "Speed Expression", "Expression evaluated against the speed message, in the dial's own units"),
-    (std::string, odometer_expression, "",
-        "Odometer Expression", "Expression evaluated against the odometer message"),
-    (pub_sub::topic_key_t, odometer_zenoh_key, "",
-        "Odometer Zenoh Key", "Zenoh topic key the odometer reading is read from"),
-    (pub_sub::schema_type_t, odometer_schema_type, pub_sub::schema_type_t::VehicleOdometer,
-        "Odometer Schema Type", "Data schema type for the odometer subscription"),
+    (pub_sub::subscription_t, speed, pub_sub::subscriptionFor(pub_sub::schema_type_t::VehicleSpeed),
+        "Speed", "Road speed: topic, schema, expression and loss-of-comm timeout"),
+    (pub_sub::subscription_t, odometer, pub_sub::subscriptionFor(pub_sub::schema_type_t::VehicleOdometer),
+        "Odometer", "Total distance: topic, schema, expression and loss-of-comm timeout"),
     // uint16_t, not uint8_t: yaml-cpp treats an 8-bit integer as a character,
     // so `[28, 54, 87]` was emitted as `["\x1c", 6, W]` -- a raw control byte in
     // the file and a different list on the way back in. Nothing here needs to be
     // one byte wide, and a wider type keeps the YAML numeric.
     (std::vector<uint16_t>, shift_box_markers, {},
-        "Shift Markers", "Speeds, in dial units, at which to draw a shift box on the face"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, speed_stale_after_ms, 0,
-        "Speed Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, odometer_stale_after_ms, 0,
-        "Odometer Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
+        "Shift Markers", "Speeds, in dial units, at which to draw a shift box on the face")
 )
 
 // max_speed scales the dial and divides the needle position. The odometer
@@ -52,9 +39,6 @@ inline std::vector<std::string> validate(Mercedes190ESpeedometerConfig_t& cfg)
     config_codec::limits::clampInto<uint32_t>(cfg.odometer_value, 0u, 999999u, "odometer_value", notes);
     config_codec::limits::capLength(cfg.shift_box_markers, config_codec::limits::kMaxMarkers,
                                  "shift_box_markers", notes);
-    config_codec::limits::clampStaleAfter(cfg.speed_stale_after_ms, "speed_stale_after_ms", notes);
-    config_codec::limits::clampStaleAfter(cfg.odometer_stale_after_ms, "odometer_stale_after_ms",
-                                          notes);
     return notes;
 }
 

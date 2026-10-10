@@ -58,7 +58,7 @@ private:
 
     // Nothing is reporting the condition. The subscription is the only place
     // this is recorded.
-    bool conditionStale() const { return _expression_parser && _expression_parser->isStale(); }
+    bool conditionStale() const { return dashboard::isStale(_expression_parser); }
 
     // A warning lamp fails lit. A dark lamp says the condition is false, and
     // saying that when nothing has reported for seconds is the one answer a

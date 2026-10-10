@@ -8,6 +8,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
@@ -16,15 +17,8 @@
 // MoTeC gain/loss strip -- how far ahead or behind the reference lap you are --
 // and anything else that is naturally signed around a target.
 REFLECT_STRUCT(CenterBarConfig_t,
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
-        "Schema Type", "Data schema type for the subscription"),
-    (std::string, value_expression, "",
-        "Value Expression", "Expression to compute the signed value"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, stale_after_ms, 0,
-        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
+    (pub_sub::subscription_t, value, pub_sub::subscriptionFor(pub_sub::schema_type_t::VehicleSpeed),
+        "Value", "The reading shown: topic, schema, expression and loss-of-comm timeout"),
 
     // Full-scale deflection either side of centre, in the value's own units.
     (float, range, 1.0,
@@ -58,7 +52,6 @@ REFLECT_STRUCT(CenterBarConfig_t,
 inline std::vector<std::string> validate(CenterBarConfig_t& cfg)
 {
     std::vector<std::string> notes;
-    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     if (!(cfg.range > 0.0f))
     {
         notes.push_back("range was " + std::to_string(cfg.range) +

@@ -22,10 +22,8 @@ ValueReadoutWidget::ValueReadoutWidget(const ValueReadoutConfig_t& cfg, QWidget*
 	_labelFont.setItalic(_cfg.italic);
 	_valueFont.setItalic(_cfg.italic);
 
-	_expression_parser = dashboard::makeExpressionSubscription<double>(
-		_cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-		this, &ValueReadoutWidget::setValue,
-		std::chrono::milliseconds(_cfg.stale_after_ms));
+	_expression_parser =
+	    dashboard::makeExpressionSubscription<double>(_cfg.value, this, &ValueReadoutWidget::setValue);
 }
 
 QString ValueReadoutWidget::renderValue(const ValueReadoutConfig_t& cfg, double value)

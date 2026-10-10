@@ -7,6 +7,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
@@ -29,15 +30,8 @@ REFLECT_STRUCT(ValueReadoutConfig_t,
 	    "Label", "Label text to display"),
 	(ValueReadoutAlignment, alignment, ValueReadoutAlignment::left,
 	    "Text Alignment", "Horizontal alignment of the text"),
-	(pub_sub::topic_key_t, zenoh_key, "",
-	    "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
-        "Schema Type", "Data schema type for the subscription"),
-	(std::string, value_expression, "",
-	    "Value Expression", "Expression to extract/compute the value to display"),
-	// How long a gap in the stream means "no data". 0 never reports one.
-	(uint32_t, stale_after_ms, 0,
-	    "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
+	(pub_sub::subscription_t, value, pub_sub::subscriptionFor(pub_sub::schema_type_t::VehicleSpeed),
+	    "Value", "The reading shown: topic, schema, expression and loss-of-comm timeout"),
 
 	(ValueReadoutFormat, format, ValueReadoutFormat::number,
 	    "Format", "number, or lap_time to render seconds as m:ss.SS"),
@@ -69,7 +63,6 @@ inline std::vector<std::string> validate(ValueReadoutConfig_t& cfg)
 {
 	std::vector<std::string> notes;
 	config_codec::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
-	config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
 	return notes;
 }
 

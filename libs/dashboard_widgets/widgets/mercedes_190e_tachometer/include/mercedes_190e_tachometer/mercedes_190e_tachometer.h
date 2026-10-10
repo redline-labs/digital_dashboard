@@ -93,7 +93,7 @@ private:
     // reading, and this dial has no other way to say it has none.
     // The subscription is the only place this is recorded, so there is
     // nothing here to keep in step with it.
-    bool rpmStale() const { return rpm_expression_parser_ && rpm_expression_parser_->isStale(); }
+    bool rpmStale() const { return dashboard::isStale(rpm_expression_parser_); }
 };
 
 #endif // TACHOMETERWIDGET_H 

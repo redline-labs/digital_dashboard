@@ -48,19 +48,17 @@ template <typename T>
 class ExpressionSubscription final : public DeliveryTarget
 {
   public:
-    ExpressionSubscription(pub_sub::schema_type_t schema_type,
-                           const std::string& expression,
-                           const std::string& zenoh_key,
+    ExpressionSubscription(const pub_sub::subscription_t& subscription,
                            std::function<void(T)> deliver,
-                           std::chrono::milliseconds stale_after,
                            std::function<void()> on_stale_edge)
         : deliver_{std::move(deliver)}
         , on_stale_edge_{std::move(on_stale_edge)}
-        , staleness_{staleness::suppressed() ? std::chrono::milliseconds{0} : stale_after,
+        , staleness_{staleness::suppressed() ? std::chrono::milliseconds{0}
+                                             : std::chrono::milliseconds{subscription.stale_after_ms},
                      std::chrono::steady_clock::now()}
         , ticker_{DeliveryTicker::instance()}
     {
-        subscriber_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(schema_type, expression, zenoh_key);
+        subscriber_ = std::make_unique<pub_sub::ZenohExpressionSubscriber>(subscription);
         if (subscriber_->isValid())
         {
             // Runs on the zenoh RX thread: a short mutex, and a wake that posts
@@ -159,68 +157,28 @@ class ExpressionSubscription final : public DeliveryTarget
 template <typename T>
 using ExpressionSubscriptionPtr = std::unique_ptr<ExpressionSubscription<T>>;
 
-// Builds a coalescing subscription for `expression`, validates it, and delivers
-// results of type T to `setter` on `receiver` -- always on the GUI thread.
-// `setter` is a member-function pointer of Receiver (or any callable invocable
-// as setter(receiver, value)).
+// Builds a coalescing subscription from the config struct a widget holds --
+// every field the YAML set reaches it -- and delivers results of type T to
+// `setter` on `receiver`, always on the GUI thread. `setter` is a
+// member-function pointer of Receiver (or any callable invocable as
+// setter(receiver, value)).
 //
-// After `stale_after` with nothing arriving, isStale() turns true and the
+// An unbound subscription (empty key) returns nullptr and logs nothing: that is
+// a widget nobody has wired up yet, not a fault, and it is never stale.
+//
+// After stale_after_ms with nothing arriving, isStale() turns true and the
 // widget is repainted; both reverse when a reading returns. The widget asks
 // isStale() where it paints -- that is the only copy of the answer, so there is
 // no flag on the widget to keep in step with it. Zero means never stale, which
 // is also what the editor forces process-wide.
 //
-// Returns nullptr only if construction threw. An expression that does not
-// compile still yields a subscription, because that subscription is what
-// reports no data: a gauge showing zero for a broken binding is worse than one
-// showing nothing.
+// An expression that does not compile still yields a subscription, because
+// that subscription is what reports no data: a gauge showing zero for a broken
+// binding is worse than one showing nothing. nullptr otherwise means
+// construction threw.
 //
 // Failures name the key. It is what a config author wrote, what `inspect echo`
-// takes, and what tells two bindings of the same widget apart -- which a label
-// passed in by the caller could only do by being kept in step with the code by
-// hand.
-template <typename T, typename Receiver, typename Setter>
-ExpressionSubscriptionPtr<T> makeExpressionSubscription(
-    pub_sub::schema_type_t schema_type,
-    const std::string& expression,
-    const std::string& zenoh_key,
-    Receiver* receiver,
-    Setter setter,
-    std::chrono::milliseconds stale_after)
-{
-    ExpressionSubscriptionPtr<T> subscription;
-    try
-    {
-        subscription = std::make_unique<ExpressionSubscription<T>>(
-            schema_type, expression, zenoh_key,
-            [receiver, setter](T value) { std::invoke(setter, receiver, value); }, stale_after,
-            [receiver]() { receiver->update(); });
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("'{}': failed to initialize expression subscriber: {}", zenoh_key,
-                     e.what());
-        return nullptr;
-    }
-
-    // Returned even when the expression did not compile, unlike the overload
-    // above: the subscription is what reports no data, so throwing it away
-    // would leave the gauge showing zero rather than showing nothing. The error
-    // is still said once, here.
-    if (!subscription->isValid())
-    {
-        SPDLOG_ERROR("'{}': invalid expression '{}' for schema '{}'", zenoh_key, expression,
-                     reflection::enum_traits<pub_sub::schema_type_t>::to_string(schema_type));
-    }
-
-    return subscription;
-}
-
-// The same, from the config struct a widget holds -- every field the YAML set
-// reaches the subscription, stale_after_ms included.
-//
-// An unbound subscription (empty key) returns nullptr and logs nothing: that is
-// a widget nobody has wired up yet, not a fault, and it is never stale.
+// takes, and what tells two bindings of the same widget apart.
 template <typename T, typename Receiver, typename Setter>
 ExpressionSubscriptionPtr<T> makeExpressionSubscription(const pub_sub::subscription_t& subscription,
                                                         Receiver* receiver, Setter setter)
@@ -229,9 +187,29 @@ ExpressionSubscriptionPtr<T> makeExpressionSubscription(const pub_sub::subscript
     {
         return nullptr;
     }
-    return makeExpressionSubscription<T>(subscription.schema_type, subscription.expression,
-                                         subscription.zenoh_key, receiver, setter,
-                                         std::chrono::milliseconds(subscription.stale_after_ms));
+
+    ExpressionSubscriptionPtr<T> created;
+    try
+    {
+        created = std::make_unique<ExpressionSubscription<T>>(
+            subscription, [receiver, setter](T value) { std::invoke(setter, receiver, value); },
+            [receiver]() { receiver->update(); });
+    }
+    catch (const std::exception& e)
+    {
+        SPDLOG_ERROR("'{}': failed to initialize expression subscriber: {}", subscription.zenoh_key,
+                     e.what());
+        return nullptr;
+    }
+
+    if (!created->isValid())
+    {
+        SPDLOG_ERROR("'{}': invalid expression '{}' for schema '{}'", subscription.zenoh_key,
+                     subscription.expression,
+                     reflection::enum_traits<pub_sub::schema_type_t>::to_string(subscription.schema_type));
+    }
+
+    return created;
 }
 
 // Null-safe: an unbound subscription is never stale.

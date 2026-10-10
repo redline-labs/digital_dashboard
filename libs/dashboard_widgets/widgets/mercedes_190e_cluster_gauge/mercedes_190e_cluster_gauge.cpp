@@ -297,24 +297,16 @@ Mercedes190EClusterGauge::Mercedes190EClusterGauge(const Mercedes190EClusterGaug
     m_fontFamily = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
 
     top_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
-        m_config.fuel_gauge.schema_type, m_config.fuel_gauge.value_expression, m_config.fuel_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setFuelGaugeValue,
-        std::chrono::milliseconds(m_config.fuel_gauge.stale_after_ms));
+        m_config.fuel_gauge.source, this, &Mercedes190EClusterGauge::setFuelGaugeValue);
 
     right_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
-        m_config.right_gauge.schema_type, m_config.right_gauge.value_expression, m_config.right_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setOilPressureGaugeValue,
-        std::chrono::milliseconds(m_config.right_gauge.stale_after_ms));
+        m_config.right_gauge.source, this, &Mercedes190EClusterGauge::setOilPressureGaugeValue);
 
     bottom_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
-        m_config.bottom_gauge.schema_type, m_config.bottom_gauge.value_expression, m_config.bottom_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setEconomyGaugeValue,
-        std::chrono::milliseconds(m_config.bottom_gauge.stale_after_ms));
+        m_config.bottom_gauge.source, this, &Mercedes190EClusterGauge::setEconomyGaugeValue);
 
     left_gauge_expression_parser_ = dashboard::makeExpressionSubscription<float>(
-        m_config.left_gauge.schema_type, m_config.left_gauge.value_expression, m_config.left_gauge.zenoh_key,
-        this, &Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue,
-        std::chrono::milliseconds(m_config.left_gauge.stale_after_ms));
+        m_config.left_gauge.source, this, &Mercedes190EClusterGauge::setCoolantTemperatureGaugeValue);
 
     // Initialize SVG renderers
     fuel_icon_svg_renderer_.load(QString(":/mercedes_190e_cluster_gauge/gas_icon.svg"));

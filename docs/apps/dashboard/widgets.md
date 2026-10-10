@@ -26,20 +26,34 @@ inside it is warned about and ignored.
     label_text: "ENGINE OIL TMP"
     alignment: left
     italic: true
-    zenoh_key: "vehicle/engine/temperature_celsius"
-    schema_type: "EngineTemperature"
-    value_expression: "temperatureCelsius"
+    value:
+      zenoh_key: "vehicle/engine/temperature_celsius"
+      schema_type: "EngineTemperature"
+      expression: "temperatureCelsius"
+      stale_after_ms: 500
 ```
 
-Widgets that read the bus take the same three keys: a `zenoh_key` naming the
-topic, a `schema_type` naming the Cap'n Proto schema published on it, and an
-expression evaluated against each message to produce the reading. The
-expression can be a field name or arithmetic over several, so a gauge in mph
-can read a topic in metres per second. `schema_type` is a schema name from the
-registry, such as `VehicleSpeed` or `EngineRpm`; `zenoh_describe_schema` under
-[agent control](../../developing/agent-control.html) lists a schema's fields.
-An empty `zenoh_key` leaves the widget unbound, which is how a layout is
-sketched before the signals exist.
+### Subscriptions
+
+Every value a widget reads off the bus is a *subscription*: one key in the
+widget's config, named for what it feeds (`value`, `rpm`, `speed`, `condition`,
+`latitude`, or `source` on a cluster sub-gauge or a page trigger), holding the
+same four fields everywhere.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `zenoh_key` | topic key | `""` | Topic to subscribe to. Empty leaves the binding unbound, which is how a layout is sketched before the signals exist; nothing is subscribed and nothing is logged. |
+| `schema_type` | enum | per widget | Cap'n Proto schema published on the topic, such as `VehicleSpeed` or `EngineRpm`. `zenoh_describe_schema` under [agent control](../../developing/agent-control.html) lists a schema's fields. |
+| `expression` | string | `""` | Evaluated against each message to produce the reading: a field name, or arithmetic over several, so a gauge in mph can read a topic in metres per second. |
+| `stale_after_ms` | int | `0` | No message for this long shows the widget's no-data look. `0` never does. Clamped to `50`–`600000`. |
+
+A subscription with a key but no expression still subscribes, and goes stale,
+with a warning at load. The tables below give each widget's subscriptions and
+their default schema.
+
+Layouts written before this format kept these fields flat in `config:`
+(`zenoh_key`, `rpm_expression`, `position_zenoh_key` and so on). Those keys are
+now refused at load, and the error names where each one moved.
 
 Numeric fields are clamped, not refused: a value outside the range a widget can
 draw is pulled into range with a warning in the log, and the file is left as
@@ -70,8 +84,7 @@ expects a `MapHorizon` topic published by `nodes/map_match`.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `horizon_zenoh_key` | string | `nodes/map_match/horizon` | Topic carrying the horizon. |
-| `horizon_schema_type` | enum | `MapHorizon` | Schema of the horizon topic. |
+| `horizon_zenoh_key` | topic key | `nodes/map_match/horizon` | Topic carrying the horizon (`MapHorizon`). |
 | `show_name` | bool | `true` | Display the road name. |
 | `show_ref` | bool | `true` | Display the route number, e.g. I-405. |
 | `show_speed` | bool | `true` | Display the posted speed limit. |
@@ -96,9 +109,7 @@ formatted as a plain value with a units suffix or as a lap time.
 |---|---|---|---|
 | `label_text` | string | `Untitled` | Label text. |
 | `alignment` | enum | `left` | `left`, `right` or `center`. |
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `VehicleSpeed` | Schema of the topic. |
-| `value_expression` | string | `""` | Expression producing the value. |
+| `value` | subscription | schema `VehicleSpeed` | The value. |
 | `format` | enum | `number` | `number`, or `lap_time` to render seconds as `m:ss.SS`. |
 | `decimals` | int | `0` | Digits after the decimal point in `number` format. Clamped to `0`–`6`. |
 | `units` | string | `""` | Suffix printed after the value. |
@@ -115,9 +126,7 @@ it shows fixed text, which is how the CDL3 layout's alphanumeric fields are set.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `VehicleSpeed` | Schema of the topic. |
-| `value_expression` | string | `""` | Expression producing the displayed value. |
+| `value` | subscription | schema `VehicleSpeed` | The displayed value. |
 | `static_text` | string | `""` | Fixed text shown when there is no expression. |
 | `prefix` | string | `""` | Fixed text in the leading cells; the value is right-aligned after it. |
 | `face` | enum | `seven` | `seven` for digits only, `fourteen` for alphanumerics. |
@@ -138,9 +147,7 @@ anything signed around a target.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `VehicleSpeed` | Schema of the topic. |
-| `value_expression` | string | `""` | Expression producing the signed value. |
+| `value` | subscription | schema `VehicleSpeed` | The signed value. |
 | `range` | float | `1.0` | Full-scale deflection either side of centre, in the value's units. Must be positive; otherwise reset to `1`. |
 | `left_label` | string | `LOSS` | Label at the left end. |
 | `right_label` | string | `GAIN` | Label at the right end. |
@@ -160,12 +167,8 @@ topics: one for road speed and one for the odometer.
 |---|---|---|---|
 | `odometer_value` | int | `0` | Starting odometer reading. Clamped to `0`–`999999`. |
 | `max_speed` | int | `125` | Full-scale reading at the end of the dial. Clamped to `1`–`1000`. |
-| `zenoh_key` | string | `""` | Topic the road speed is read from. |
-| `schema_type` | enum | `VehicleSpeed` | Schema of the speed topic. |
-| `speed_expression` | string | `""` | Expression producing speed in the dial's own units. |
-| `odometer_expression` | string | `""` | Expression producing the odometer reading. |
-| `odometer_zenoh_key` | string | `""` | Topic the odometer is read from. |
-| `odometer_schema_type` | enum | `VehicleOdometer` | Schema of the odometer topic. |
+| `speed` | subscription | schema `VehicleSpeed` | Road speed, in the dial's own units. |
+| `odometer` | subscription | schema `VehicleOdometer` | The odometer reading. |
 | `shift_box_markers` | list of int | `[]` | Speeds, in dial units, at which to draw a shift box on the face. At most `64` entries. |
 
 ## mercedes_190e_tachometer
@@ -178,9 +181,7 @@ in its face.
 | `max_rpm` | int | `7000` | Full-scale reading. Clamped to `1`–`30000`. |
 | `redline_rpm` | int | `6000` | Where the red zone begins. Clamped to at most `max_rpm`. |
 | `show_clock` | bool | `true` | Draw the clock inset. |
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `EngineRpm` | Schema of the topic. |
-| `rpm_expression` | string | `""` | Expression producing engine RPM. |
+| `rpm` | subscription | schema `EngineRpm` | Engine RPM. |
 
 ## mercedes_190e_cluster_gauge
 
@@ -193,9 +194,7 @@ ECONOMY band drawn over the bottom one. `fuel_gauge`, `right_gauge`,
 |---|---|---|---|
 | `min_value` | float | `0.0` | Reading at the empty end of the sweep. |
 | `max_value` | float | `100.0` | Reading at the full end of the sweep. |
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `VehicleSpeed` | Schema of the topic. |
-| `value_expression` | string | `""` | Expression producing the reading. |
+| `source` | subscription | schema `VehicleSpeed` | The reading. |
 
 `economy_sweep` is a struct describing the band over the bottom gauge; the value
 it indicates comes from `bottom_gauge`.
@@ -223,9 +222,7 @@ over it.
 | `font_size_value` | int | `24` | Font size of the value. Clamped to `1`–`200`. |
 | `font_size_units` | int | `10` | Font size of the units label. Clamped to `1`–`200`. |
 | `update_rate` | int | `30` | Graph update rate in Hz. Clamped to `1`–`240`. |
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `VehicleSpeed` | Schema of the topic. |
-| `value_expression` | string | `""` | Expression producing the value. |
+| `value` | subscription | schema `VehicleSpeed` | The value. |
 
 ## background_rect
 
@@ -248,9 +245,7 @@ entries.
 | `telltale_type` | enum | `battery` | Which symbol: `battery`, `brake_system`, `high_beam` or `windshield_washer`. |
 | `warning_color` | color | `#FF0000` | Lamp colour while the condition holds. |
 | `normal_color` | color | `#333333` | Lamp colour otherwise. |
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `VehicleSpeed` | Schema of the topic. |
-| `condition_expression` | string | `""` | Expression; the lamp lights when it is non-zero. |
+| `condition` | subscription | schema `VehicleSpeed` | The lamp lights when it is non-zero. |
 
 ## motec_c125_tachometer
 
@@ -262,9 +257,7 @@ scale caption.
 | `max_rpm` | int | `6000` | Full-scale reading. Clamped to `1`–`30000`. |
 | `redline_rpm` | int | `5000` | Where the red zone begins. Clamped to at most `max_rpm`. |
 | `center_page_digit` | int | `5` | The large centre digit; the gear on a real display. |
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `EngineRpm` | Schema of the topic. |
-| `rpm_expression` | string | `""` | Expression producing engine RPM. |
+| `rpm` | subscription | schema `EngineRpm` | Engine RPM. |
 | `page_label` | string | `RACE` | Banner above the centre digit. |
 | `scale_label` | string | `RPMx1000` | Caption under the centre digit. |
 | `italic` | bool | `true` | Set the text in an italic face. |
@@ -281,9 +274,7 @@ square; the CDL3 layout oversizes it and offsets it upward so only the arc shows
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `max_rpm` | int | `6000` | Full-scale reading; sets how many segments the bar spans. Clamped to `1`–`30000`. |
-| `zenoh_key` | string | `""` | Topic to subscribe to. |
-| `schema_type` | enum | `EngineRpm` | Schema of the topic. |
-| `rpm_expression` | string | `""` | Expression producing engine RPM. |
+| `rpm` | subscription | schema `EngineRpm` | Engine RPM. |
 
 ## carplay
 
@@ -295,12 +286,12 @@ schema or expression to choose.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `video_key` | string | `nodes/carplay/video` | Topic the node publishes the phone's H.264/H.265 screen on. |
-| `audio_key` | string | `nodes/carplay/audio` | Topic the node publishes phone audio on. |
-| `mic_key` | string | `nodes/carplay/mic` | Topic this widget publishes captured microphone audio on, for Siri and calls. |
-| `input_key` | string | `nodes/carplay/input` | Topic this widget publishes touch events to. |
-| `session_key` | string | `nodes/carplay/session` | Topic carrying session state: whether a phone is connected and what it is doing. |
-| `visibility_key` | string | `nodes/carplay/visibility` | Topic this widget reports whether it is on screen on, so the node can hand the screen to the car. |
+| `video_key` | topic key | `nodes/carplay/video` | Topic the node publishes the phone's H.264/H.265 screen on. |
+| `audio_key` | topic key | `nodes/carplay/audio` | Topic the node publishes phone audio on. |
+| `mic_key` | topic key | `nodes/carplay/mic` | Topic this widget publishes captured microphone audio on, for Siri and calls. |
+| `input_key` | topic key | `nodes/carplay/input` | Topic this widget publishes touch events to. |
+| `session_key` | topic key | `nodes/carplay/session` | Topic carrying session state: whether a phone is connected and what it is doing. |
+| `visibility_key` | topic key | `nodes/carplay/visibility` | Topic this widget reports whether it is on screen on, so the node can hand the screen to the car. |
 | `session_stale_after_ms` | int | `3000` | No session state for this long means no driver, and the return button shows. Clamped to `50`–`600000`. |
 | `return_button.enabled` | bool | `false` | Draw a button to leave the page while no phone session is live. |
 | `return_button.label` | string | `Vehicle` | Text on the button. |
@@ -333,14 +324,14 @@ music afterwards. It subscribes to the node's `CarPlayNowPlaying` and
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `zenoh_key` | string | `nodes/carplay/nowplaying` | Topic publishing now-playing metadata. |
+| `zenoh_key` | topic key | `nodes/carplay/nowplaying` | Topic publishing now-playing metadata. |
 | `show_album_art` | bool | `true` | Draw album artwork when the phone provides it. |
 | `show_progress` | bool | `true` | Draw the progress bar and elapsed/duration times. |
 | `title_color` | color | `#FFFFFF` | Track title colour. |
 | `detail_color` | color | `#AAAAAA` | Artist, album and app text colour. |
 | `accent_color` | color | `#FFA500` | Progress bar colour. |
 | `show_calls` | bool | `true` | Let an active call take the widget over. |
-| `call_zenoh_key` | string | `nodes/carplay/call` | Topic publishing call state. |
+| `call_zenoh_key` | topic key | `nodes/carplay/call` | Topic publishing call state. |
 | `call_accent_color` | color | `#39B54A` | Colour of the call badge and status text. |
 | `transition_ms` | int | `260` | Cross-fade between music and call. Clamped to `0`–`2000`. |
 | `call_linger_ms` | int | `1600` | How long "Call ended" stays up before the music returns. Clamped to `0`–`10000`. |
@@ -353,7 +344,7 @@ road being turned onto and a trip summary strip. It subscribes to the node's
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `zenoh_key` | string | `nodes/carplay/nav` | Topic publishing guidance. An empty key is reset to this. |
+| `zenoh_key` | topic key | `nodes/carplay/nav` | Topic publishing guidance. An empty key is reset to this. |
 | `imperial_units` | bool | `false` | Show feet and miles instead of metres and kilometres. |
 | `show_trip_summary` | bool | `true` | Draw remaining distance, remaining time and ETA. |
 | `arrow_color` | color | `#39B54A` | Manoeuvre arrow colour. |
@@ -372,7 +363,7 @@ and topics are described on [Pages](pages.html).
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `default_page` | string | `""` | Page shown at startup; empty means the first. |
-| `triggers` | list | `[]` | Bus inputs that change the page: `zenoh_key`, `schema_type`, `expression`, `edge`, `stale_after_ms`, `action`, `page`. |
+| `triggers` | list | `[]` | Bus inputs that change the page: `source` (a subscription, schema `GrayhillButtons`; its `stale_after_ms` re-primes a `rising` trigger), `edge`, `action`, `page`. |
 
 ## page_button
 
@@ -407,7 +398,7 @@ and the widget stays within it.
 |---|---|---|---|
 | `tileset` | string | `socal` | Tileset name as configured in map_server. |
 | `overlay_tilesets` | list of string | `[]` | Extra tilesets drawn over the base one, e.g. `tracks`, each from its own archive. |
-| `tile_zenoh_key` | string | `map/tile` | Service key map_server answers tile requests on. |
+| `tile_zenoh_key` | service key | `map/tile` | Service key map_server answers tile requests on. |
 | `request_timeout_ms` | int | `4000` | How long to wait for a tile. Clamped to `100`–`30000`. |
 | `min_zoom` | int | `0` | Shallowest the camera may go. Clamped to `0`–`22`. |
 | `max_zoom` | int | `17` | Deepest the camera may go; past the archive's depth it magnifies the deepest tiles. Clamped to `0`–`22`, and swapped with `min_zoom` if inverted. |
@@ -417,17 +408,15 @@ and the widget stays within it.
 | `bearing` | float | `0.0` | Map rotation in degrees clockwise from north. Wrapped into `0`–`360`. |
 | `interactive` | bool | `false` | Allow dragging to pan and the wheel to zoom. A recentre button appears once the camera has moved. |
 | `follow_vehicle` | bool | `true` | Keep the camera centred on the vehicle. |
-| `orientation` | enum | `north_up` | `north_up` keeps the configured bearing; `heading_up` turns the map to the vehicle's heading and needs `heading_expression`. |
+| `orientation` | enum | `north_up` | `north_up` keeps the configured bearing; `heading_up` turns the map to the vehicle's heading and needs a bound `heading`. |
 | `view_mode` | enum | `top_down` | `top_down` is the flat map; `perspective` tilts it back to `pitch`. |
 | `pitch` | float | `45.0` | Tilt of the perspective view, in degrees. Clamped to `10` and the projection's maximum. |
 | `show_track` | bool | `true` | Draw a trail behind the vehicle. |
 | `track_points` | int | `600` | How many positions the trail keeps; `0` disables it. |
-| `position_zenoh_key` | string | `""` | Topic carrying the vehicle position, e.g. `nodes/bd992/position`. |
-| `position_schema_type` | enum | `GsofLatLongHeight` | Schema of the position topic. |
-| `latitude_expression` | string | `""` | Expression yielding degrees north. |
-| `longitude_expression` | string | `""` | Expression yielding degrees east. |
-| `heading_expression` | string | `""` | Expression yielding degrees clockwise from north. Optional. |
-| `highlight_zenoh_key` | string | `""` | `MapHorizon` topic, e.g. `nodes/map_match/horizon`. The matched road ahead is recoloured; way ids only exist at zoom 13 and deeper, so it vanishes when shallower. Empty disables it. |
+| `latitude` | subscription | schema `GsofLatLongHeight` | Degrees north, e.g. `nodes/bd992/position` with `latitudeDeg`. |
+| `longitude` | subscription | schema `GsofLatLongHeight` | Degrees east. Usually the same topic as `latitude`. |
+| `heading` | subscription | schema `GsofLatLongHeight` | Degrees clockwise from north. Optional: leave its key empty. Any bound one going stale greys the marker. |
+| `highlight_zenoh_key` | topic key | `""` | `MapHorizon` topic, e.g. `nodes/map_match/horizon`. The matched road ahead is recoloured; way ids only exist at zoom 13 and deeper, so it vanishes when shallower. Empty disables it. |
 | `highlight_color` | color | `#00E5FFB0` | Colour of the matched road. |
 | `highlight_extra_width` | float | `2.0` | Extra half-width in pixels beyond the road's own. Clamped to `0`–`20`. |
 | `marker_color` | color | `#FF3B30` | Vehicle marker and trail colour. |

@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -246,14 +247,15 @@ void validatePageStack(const YAML::Node& node, const std::string& path, std::vec
                 {
                     continue;  // validateStruct says so
                 }
-                if (scalarText(trigger["zenoh_key"]).value_or("").empty())
+                const YAML::Node source = trigger["source"];
+                if (!source || !source.IsMap() || scalarText(source["zenoh_key"]).value_or("").empty())
                 {
-                    issues.push_back({Issue::Severity::error, trigger_path + ".zenoh_key",
+                    issues.push_back({Issue::Severity::error, trigger_path + ".source.zenoh_key",
                                       "missing; a trigger has to watch a topic"});
                 }
-                if (scalarText(trigger["expression"]).value_or("").empty())
+                if (!source || !source.IsMap() || scalarText(source["expression"]).value_or("").empty())
                 {
-                    issues.push_back({Issue::Severity::error, trigger_path + ".expression",
+                    issues.push_back({Issue::Severity::error, trigger_path + ".source.expression",
                                       "missing; say what makes it fire, e.g. bit(buttons1To8, 0)"});
                 }
                 if (scalarText(trigger["action"]).value_or("next") == "go_to")
@@ -649,6 +651,67 @@ void validateWindowList(const YAML::Node& root, std::vector<Issue>& issues, Vali
     }
 }
 
+// Binding keys that moved into a pub_sub::subscription_t field, and where.
+//
+// Left to the generic check, an old layout gets "unknown key, ignored" and
+// loads with the binding silently gone -- a blank gauge on a car, discovered
+// at the track. Refused instead, with the new spelling.
+struct MovedKey
+{
+    std::string_view key;
+    std::string_view now;
+};
+
+constexpr std::string_view kIntoSubscription =
+    "the widget's subscription field (rpm, value, condition, speed, odometer, latitude, "
+    "longitude, heading, or source for sub-gauges and page triggers)";
+
+constexpr MovedKey kMovedKeys[] = {
+    {"zenoh_key", kIntoSubscription},
+    {"schema_type", kIntoSubscription},
+    {"expression", kIntoSubscription},
+    {"stale_after_ms", kIntoSubscription},
+    {"rpm_expression", "rpm.expression"},
+    {"value_expression", "value.expression (source.expression on a cluster sub-gauge)"},
+    {"condition_expression", "condition.expression"},
+    {"speed_expression", "speed.expression"},
+    {"speed_stale_after_ms", "speed.stale_after_ms"},
+    {"odometer_zenoh_key", "odometer.zenoh_key"},
+    {"odometer_schema_type", "odometer.schema_type"},
+    {"odometer_expression", "odometer.expression"},
+    {"odometer_stale_after_ms", "odometer.stale_after_ms"},
+    {"position_zenoh_key", "latitude.zenoh_key, longitude.zenoh_key and heading.zenoh_key"},
+    {"position_schema_type", "latitude.schema_type, longitude.schema_type and heading.schema_type"},
+    {"position_stale_after_ms",
+     "latitude.stale_after_ms, longitude.stale_after_ms and heading.stale_after_ms"},
+    {"latitude_expression", "latitude.expression"},
+    {"longitude_expression", "longitude.expression"},
+    {"heading_expression", "heading.expression"},
+};
+
+void refuseMovedKeys(std::vector<Issue>& issues)
+{
+    for (Issue& issue : issues)
+    {
+        if (issue.severity != Issue::Severity::warning || !issue.message.starts_with("unknown key"))
+        {
+            continue;
+        }
+        const std::size_t dot = issue.path.rfind('.');
+        const std::string_view leaf =
+            dot == std::string::npos ? std::string_view(issue.path) : std::string_view(issue.path).substr(dot + 1);
+        for (const MovedKey& moved : kMovedKeys)
+        {
+            if (leaf == moved.key)
+            {
+                issue.severity = Issue::Severity::error;
+                issue.message = "moved; it now lives under " + std::string(moved.now);
+                break;
+            }
+        }
+    }
+}
+
 }  // namespace
 
 std::vector<Issue> validate_app_config(const YAML::Node& root)
@@ -671,6 +734,7 @@ std::vector<Issue> validate_app_config(const YAML::Node& root)
         validateWindow(root, "", issues, ctx);
     }
     validateCommands(ctx, issues);
+    refuseMovedKeys(issues);
 
     return issues;
 }

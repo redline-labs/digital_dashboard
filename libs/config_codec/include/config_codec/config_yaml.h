@@ -36,6 +36,13 @@
 // cannot, and std::variant picks its own up for free once every alternative has
 // one -- which is what makes widget_config_t's comparison three lines rather
 // than a switch over the widget table.
+// Declared ahead of fieldsEqual so that a nested field's comparison finds it by
+// ordinary lookup. ADL alone does not: for a reflected struct declared inside a
+// namespace (pub_sub::subscription_t) it searches only that namespace.
+template <typename T>
+    requires reflection::is_reflected_struct_v<T>
+bool operator==(const T& lhs, const T& rhs);
+
 namespace config_codec::detail
 {
 // Compares field-by-field through the member pointers reflection already holds,

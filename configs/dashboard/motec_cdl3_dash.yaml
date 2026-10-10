@@ -28,9 +28,10 @@ widgets:
     height: 580
     config:
       max_rpm: 7000
-      zenoh_key: "vehicle/engine/rpm"
-      schema_type: "EngineRpm"
-      rpm_expression: "rpm"
+      rpm:
+        zenoh_key: "vehicle/engine/rpm"
+        schema_type: "EngineRpm"
+        expression: "rpm"
 
   # ---- Fuel, top right ----------------------------------------------------
   # Pushed clear of the bargraph's scale: the tacho draws its 0-7 numbers along
@@ -51,9 +52,10 @@ widgets:
       lit_color: "#0E1A24"
       ghost_color: "#5FAFB9"
       caption_color: "#0E1A24"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius * 0.3"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius * 0.3"
 
   # ---- Engine temperature, left ------------------------------------------
   # Right of the arc's "0" tick label and short of the gear cell.
@@ -72,9 +74,10 @@ widgets:
       lit_color: "#0E1A24"
       ghost_color: "#5FAFB9"
       caption_color: "#0E1A24"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius"
 
   # ---- Gear, centre -------------------------------------------------------
   # One cell, no caption, and much larger than everything else -- the gear is
@@ -91,9 +94,10 @@ widgets:
       decimals: 0
       lit_color: "#0E1A24"
       ghost_color: "#5FAFB9"
-      zenoh_key: "vehicle/engine/rpm"
-      schema_type: "EngineRpm"
-      value_expression: "4"
+      value:
+        zenoh_key: "vehicle/engine/rpm"
+        schema_type: "EngineRpm"
+        expression: "4"
 
   # ---- Lap time, centre right --------------------------------------------
   - type: segment_readout
@@ -111,9 +115,10 @@ widgets:
       lit_color: "#0E1A24"
       ghost_color: "#5FAFB9"
       caption_color: "#0E1A24"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius * 0.0625"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius * 0.0625"
 
   # ---- Bottom strip: the alphanumeric bar ---------------------------------
   # MoTeC specify the CDL3's as "13 digit alphanumeric": ONE field of thirteen
@@ -134,6 +139,7 @@ widgets:
       prefix: "OIL PRESS"
       lit_color: "#0E1A24"
       ghost_color: "#5FAFB9"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius * 0.5588"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius * 0.5588"

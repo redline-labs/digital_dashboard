@@ -76,9 +76,7 @@ SparklineItem::SparklineItem(const SparklineConfig_t& cfg, QWidget *parent)
 
 
     _expression_parser = dashboard::makeExpressionSubscription<double>(
-        _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-        this, &SparklineItem::setLatestValue, 
-        std::chrono::milliseconds(_cfg.stale_after_ms));
+        _cfg.value, this, &SparklineItem::setLatestValue);
 
     // Initialize and start the repaint timer
     m_repaintTimer = new QTimer(this);

@@ -72,8 +72,8 @@ REFLECT_STRUCT(map_binding_t,
 // tiles straight off disk. The renderer underneath is shared (libs/map_render);
 // the camera, the tile selection, the paint driver and this config are not.
 //
-// NO position_zenoh_key/latitude_expression pair as the widget has, because a
-// panel is BOUND rather than configured: the browser and the drag hand it
+// NOT typed into a form the way the widget's are, because a panel is BOUND
+// rather than configured: the browser and the drag hand it
 // candidates, and `latitude`/`longitude`/`color_by` are where they land.
 REFLECT_STRUCT(MapPanelConfig_t,
     (std::string, title, "Map",

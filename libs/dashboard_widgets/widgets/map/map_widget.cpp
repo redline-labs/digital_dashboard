@@ -183,36 +183,17 @@ MapWidget::MapWidget(const config_t& config, QWidget* parent) :
             onArrival));
     }
 
-    if (!mConfig.position_zenoh_key.empty())
-    {
-        if (!mConfig.latitude_expression.empty())
-        {
-            mLatitudeSubscription = dashboard::makeExpressionSubscription<double>(
-                mConfig.position_schema_type, mConfig.latitude_expression,
-                mConfig.position_zenoh_key, this, &MapWidget::setLatitude,
-                std::chrono::milliseconds(mConfig.position_stale_after_ms));
-        }
-        if (!mConfig.longitude_expression.empty())
-        {
-            mLongitudeSubscription = dashboard::makeExpressionSubscription<double>(
-                mConfig.position_schema_type, mConfig.longitude_expression,
-                mConfig.position_zenoh_key, this, &MapWidget::setLongitude,
-                std::chrono::milliseconds(mConfig.position_stale_after_ms));
-        }
-        if (!mConfig.heading_expression.empty())
-        {
-            mHeadingSubscription = dashboard::makeExpressionSubscription<double>(
-                mConfig.position_schema_type, mConfig.heading_expression,
-                mConfig.position_zenoh_key, this, &MapWidget::setHeading,
-                std::chrono::milliseconds(mConfig.position_stale_after_ms));
-        }
+    mLatitudeSubscription =
+        dashboard::makeExpressionSubscription<double>(mConfig.latitude, this, &MapWidget::setLatitude);
+    mLongitudeSubscription =
+        dashboard::makeExpressionSubscription<double>(mConfig.longitude, this, &MapWidget::setLongitude);
+    mHeadingSubscription =
+        dashboard::makeExpressionSubscription<double>(mConfig.heading, this, &MapWidget::setHeading);
 
-        if (mConfig.orientation == MapOrientation_t::heading_up &&
-            mConfig.heading_expression.empty())
-        {
-            SPDLOG_WARN("[map] orientation is heading_up but heading_expression is empty; the "
-                        "map will keep the configured bearing");
-        }
+    if (mConfig.orientation == MapOrientation_t::heading_up && mConfig.heading.zenoh_key.empty())
+    {
+        SPDLOG_WARN("[map] orientation is heading_up but heading has no key; the map will keep "
+                    "the configured bearing");
     }
 
     if (mConfig.interactive)

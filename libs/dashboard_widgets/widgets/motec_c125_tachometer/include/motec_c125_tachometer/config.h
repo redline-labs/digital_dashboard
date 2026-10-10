@@ -6,6 +6,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
@@ -18,12 +19,8 @@ REFLECT_STRUCT(MotecC125TachometerConfig_t,
     // so this saved as the control byte 0x05 rather than the number 5.
     (uint16_t, center_page_digit, 5,
         "Center Digit", "The large digit in the middle of the dial; the gear on a real display"),
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
-        "Schema Type", "Data schema type for the subscription"),
-    (std::string, rpm_expression, "",
-        "RPM Expression", "Expression evaluated against the message to produce engine RPM"),
+    (pub_sub::subscription_t, rpm, pub_sub::subscriptionFor(pub_sub::schema_type_t::EngineRpm),
+        "RPM", "Engine speed: topic, schema, expression and loss-of-comm timeout"),
 
     // The banner above the gear digit. On the real display this names the
     // active page -- PRACTICE, WARM-UP, RACE -- which is why it is text rather
@@ -44,10 +41,7 @@ REFLECT_STRUCT(MotecC125TachometerConfig_t,
     (helpers::Color, ring_color, "#C8C8C8",
         "Ring Color", "Colour of the outer ring and the tick marks"),
     (helpers::Color, digit_color, "#FFFFFF",
-        "Digit Color", "Colour of the centre digit and the dial labels"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, stale_after_ms, 0,
-        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
+        "Digit Color", "Colour of the centre digit and the dial labels")
 )
 
 // max_rpm divides the needle position and bounds both the tick loop and the
@@ -59,7 +53,6 @@ inline std::vector<std::string> validate(MotecC125TachometerConfig_t& cfg)
     std::vector<std::string> notes;
     config_codec::limits::clampFullScale(cfg.max_rpm, "max_rpm", notes);
     config_codec::limits::clampInto<uint32_t>(cfg.redline_rpm, 0u, cfg.max_rpm, "redline_rpm", notes);
-    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     return notes;
 }
 

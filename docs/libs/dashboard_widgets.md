@@ -65,9 +65,8 @@ Inside a widget, data comes from the bus through one call; the setter runs on
 the GUI thread:
 
 ```cpp
-_expression_parser = dashboard::makeExpressionSubscription<double>(
-    _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-    this, &ValueReadoutWidget::setValue, "value readout");
+_expression_parser =
+    dashboard::makeExpressionSubscription<double>(_cfg.value, this, &ValueReadoutWidget::setValue);
 ```
 
 Adding a widget is a five-step registration; [Adding a widget](../developing/adding-a-widget.html)

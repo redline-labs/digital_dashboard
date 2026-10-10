@@ -9,21 +9,18 @@
 #include "dashboard/page_command.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
-#include "pub_sub/topic_key.h"
+#include "pub_sub/subscription.h"
 
 // A bus input that changes the page: when `expression` over the messages on
 // `zenoh_key` fires (see trigger_edge_t), `action` is applied to this stack.
 REFLECT_STRUCT(page_trigger_t,
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Topic to watch"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::GrayhillButtons,
-        "Schema Type", "Schema of the messages on that topic"),
-    (std::string, expression, "",
-        "Expression", "Non-zero means true, e.g. bit(buttons1To8, 0)"),
+    // stale_after_ms here is the re-prime gap, for `rising` only: a stream
+    // quiet that long makes the next sample a first sample again, so a press
+    // held across a publisher restart does not fire twice.
+    (pub_sub::subscription_t, source, pub_sub::subscriptionFor(pub_sub::schema_type_t::GrayhillButtons),
+        "Source", "Topic and expression to watch; non-zero means true, e.g. bit(buttons1To8, 0). Stale After re-primes a rising trigger"),
     (trigger_edge_t, edge, trigger_edge_t::rising,
         "Edge", "rising: fire when the expression becomes true (state topics); on_sample: every true message (event topics)"),
-    (uint32_t, stale_after_ms, 0,
-        "Re-prime After (ms)", "rising only: a gap this long makes the next sample a first sample again; 0 = never"),
     (page_action_t, action, page_action_t::next,
         "Action", "next, prev, go_to or back"),
     (std::string, page, "",
@@ -39,15 +36,5 @@ REFLECT_STRUCT(PageStackConfig_t,
     (std::vector<page_trigger_t>, triggers, {},
         "Triggers", "Bus inputs that change the page")
 )
-
-inline std::vector<std::string> validate(PageStackConfig_t& cfg)
-{
-    std::vector<std::string> notes;
-    for (page_trigger_t& trigger : cfg.triggers)
-    {
-        config_codec::limits::clampStaleAfter(trigger.stale_after_ms, "triggers[].stale_after_ms", notes);
-    }
-    return notes;
-}
 
 #endif // PAGE_STACK_CONFIG_H

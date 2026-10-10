@@ -21,9 +21,7 @@ Mercedes190ETelltale::Mercedes190ETelltale(const Mercedes190ETelltaleConfig_t& c
     , mAsserted(false)
 {
     _expression_parser = dashboard::makeExpressionSubscription<bool>(
-        _cfg.schema_type, _cfg.condition_expression, _cfg.zenoh_key,
-        this, &Mercedes190ETelltale::setAsserted,
-        std::chrono::milliseconds(_cfg.stale_after_ms));
+        _cfg.condition, this, &Mercedes190ETelltale::setAsserted);
 
 
     // Select SVG alias based on telltale type

@@ -233,8 +233,8 @@ void test_the_config_describes_itself()
     check(fields.contains("style"), "and the style is exposed rather than hidden");
     check(fields.contains("track_width") && fields.contains("marker_outline_color"),
           "the vehicle's own styling is editable too");
-    check(fields.contains("position_schema_type") &&
-              fields["position_schema_type"].value("type", "") == "enum",
+    check(fields.contains("latitude") &&
+              fields["latitude"]["fields"]["schema_type"].value("type", "") == "enum",
           "the schema type is offered as an enum the editor can list");
     check(fields.contains("highlight_zenoh_key") && fields.contains("highlight_color") &&
               fields.contains("highlight_extra_width"),
@@ -1278,7 +1278,6 @@ void test_the_widget_constructs_without_a_server()
     // starts before its nodes do, and a widget that threw would take the whole
     // layout with it.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
 
     std::unique_ptr<MapWidget> widget;
     try
@@ -1307,9 +1306,10 @@ void test_a_bad_expression_does_not_take_the_widget_down()
     // The subscription is then simply absent -- logged, and the map still
     // draws. Refusing to construct would turn one typo into no dashboard.
     MapConfig_t config;
-    config.position_zenoh_key = "nodes/bd992/position";
-    config.latitude_expression = "this is not an expression (((";
-    config.longitude_expression = "nor is this";
+    config.latitude.zenoh_key = "nodes/bd992/position";
+    config.latitude.expression = "this is not an expression (((";
+    config.longitude.zenoh_key = "nodes/bd992/position";
+    config.longitude.expression = "nor is this";
 
     std::unique_ptr<MapWidget> widget;
     try
@@ -1330,7 +1330,6 @@ void test_the_widget_paints_offscreen()
     // THE check this file exists for. Rendering into a QImage drives the same
     // paintEvent the screenshot path does, with no window, no GPU and no RHI.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.style.background = helpers::Color("#112233");
     config.show_status = false;
 
@@ -1370,7 +1369,6 @@ void test_the_widget_paints_at_its_screens_ratio()
     // screen to take a ratio from, so that variable is the only way to reach
     // the HiDPI path at all.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.style.background = helpers::Color("#112233");
     config.show_status = false;
 
@@ -1487,7 +1485,6 @@ void test_a_map_that_was_not_asked_to_be_interactive_ignores_the_mouse()
     // surface people brace a hand against on a bad road; a map that panned when
     // they did would be worse than one that never moves.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.follow_vehicle = false;
 
     MapWidget widget(config);
@@ -1515,8 +1512,7 @@ void test_a_drag_keeps_the_grabbed_point_under_the_pointer()
     for (const double bearing : { 0.0, 37.0 })
     {
         MapConfig_t config;
-        config.position_zenoh_key.clear();
-        config.interactive = true;
+            config.interactive = true;
         config.follow_vehicle = false;
         config.zoom = 14.0;
         config.bearing = bearing;
@@ -1548,7 +1544,6 @@ void test_a_drag_keeps_the_grabbed_point_under_the_pointer()
 void test_the_recentre_button_appears_with_the_pan_and_undoes_it()
 {
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     // No vehicle to go back to in a test with no bus, so recentring goes back
     // to the configured centre. Same code either way -- camera() simply falls
@@ -1591,7 +1586,6 @@ void test_the_recentre_button_appears_with_the_pan_and_undoes_it()
 void test_the_wheel_zooms_about_the_pointer()
 {
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.follow_vehicle = false;
     config.zoom = 12.0;
@@ -1644,7 +1638,6 @@ void test_a_trackpad_swipe_zooms_by_what_the_fingers_asked_for()
     // So: send a stream the way a trackpad does, with no time to ease between
     // events, and require that the whole gesture arrives.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.follow_vehicle = false;
     config.zoom = 12.0;
@@ -1687,7 +1680,6 @@ void test_the_wheel_does_not_stop_the_map_following_the_vehicle()
     // off hasPosition() would let a zoom taken while the GPS was still coming
     // up cancel following for good.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.follow_vehicle = true;
     config.zoom = 12.0;
@@ -1725,7 +1717,6 @@ void test_the_wheel_stops_at_the_camera_range_the_layout_allows()
     // layout may legitimately let the user zoom past what any archive holds,
     // and refreshTiles() then draws the deepest level there is, magnified.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.follow_vehicle = false;
     config.min_zoom = 6;
@@ -1763,7 +1754,6 @@ void test_a_drag_cannot_leave_the_projection()
     // nothing at all -- and dragging west past the date line produces a
     // longitude that would project a whole world away.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.follow_vehicle = false;
     config.zoom = 1.0;
@@ -1792,7 +1782,6 @@ void test_a_sized_widget_knows_which_tiles_it_needs()
     // The bridge between the projection and the bus. If this is empty, no tile
     // is ever requested and the map is blank for a reason no log line reports.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.zoom = 14.0;
 
     MapWidget widget(config);
@@ -1816,7 +1805,6 @@ void test_a_zero_sized_widget_asks_for_nothing()
     // projection would divide by it; asking for tiles would be asking for the
     // whole world.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
 
     MapWidget widget(config);
     widget.resize(0, 0);
@@ -1850,7 +1838,6 @@ void test_a_failed_tile_backs_off_instead_of_being_asked_for_every_frame()
     // the very next paint, forever: a permanent queue of queries at fix rate,
     // each waiting out the full timeout.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.zoom = 14.0;
     config.request_timeout_ms = 150;
 
@@ -1948,7 +1935,6 @@ void test_a_new_tile_fades_in_and_the_ticker_stops()
     FakeTileServer server(tile_key);
 
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.tile_zenoh_key = tile_key;
     config.zoom = 14.0;
     config.tile_fade_ms = 400;
@@ -1996,7 +1982,6 @@ void test_a_fading_tile_keeps_its_stand_in()
     FakeTileServer server(tile_key);
 
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.tile_zenoh_key = tile_key;
     config.zoom = 14.0;
     config.interactive = true;
@@ -2044,7 +2029,6 @@ void test_recentre_flies_back_and_lands_following()
     // The recentre button glides the camera home instead of teleporting it,
     // and hands control back to Follow Vehicle only on landing.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.follow_vehicle = false;
     config.zoom = 12.0;
@@ -2092,7 +2076,6 @@ void test_a_drag_cancels_the_fly_back()
     // is and leaves it suspended -- flying on out from under a drag would
     // fight the user for the wheel.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.follow_vehicle = false;
     config.zoom = 12.0;
@@ -2163,7 +2146,6 @@ void test_deferred_counts_only_tiles_that_would_have_been_asked()
     // tiles to the cap again made the number read as a viewport permanently
     // too big when it was filling in normally.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.zoom = 14.0;
     config.request_timeout_ms = 150;
 
@@ -2205,7 +2187,6 @@ void test_a_failed_map_heals_itself_without_a_position_stream()
     // instead, so its own update() calls reach paintEvent; everything that
     // happens after show() is the widget's doing.
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.zoom = 14.0;
     config.request_timeout_ms = 150;
 
@@ -2396,7 +2377,6 @@ void test_the_same_name_from_two_zooms_is_placed_once()
 void test_the_compass_button_cycles_orientation()
 {
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.bearing = 0.0;
 
@@ -2432,7 +2412,6 @@ void test_the_compass_button_cycles_orientation()
 void test_the_compass_needle_tracks_the_bearing()
 {
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.bearing = 35.0;
 
@@ -2452,7 +2431,6 @@ void test_the_compass_needle_tracks_the_bearing()
 void test_the_view_button_toggles_perspective()
 {
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.pitch = 52.0;
 
@@ -2487,7 +2465,6 @@ void test_the_view_button_toggles_perspective()
 void test_the_zoom_buttons_step_the_camera()
 {
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.zoom = 12.0;
 
@@ -2534,7 +2511,6 @@ void test_the_zoom_buttons_step_the_camera()
 void test_the_compass_drag_spins_and_a_click_straightens()
 {
     MapConfig_t config;
-    config.position_zenoh_key.clear();
     config.interactive = true;
     config.bearing = 0.0;
 

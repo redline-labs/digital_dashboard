@@ -98,13 +98,10 @@ SegmentReadoutWidget::SegmentReadoutWidget(const SegmentReadoutConfig_t& cfg, QW
         _text.truncate(static_cast<int>(_cfg.digits));
     }
 
-    if (!_cfg.value_expression.empty())
-    {
-        _expression_parser = dashboard::makeExpressionSubscription<double>(
-            _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-            this, &SegmentReadoutWidget::setValue, 
-            std::chrono::milliseconds(_cfg.stale_after_ms));
-    }
+    // Unbound (no key) leaves static_text on the display: that is how a fixed
+    // label is configured.
+    _expression_parser =
+        dashboard::makeExpressionSubscription<double>(_cfg.value, this, &SegmentReadoutWidget::setValue);
 }
 
 void SegmentReadoutWidget::setValue(double value)

@@ -55,10 +55,14 @@ widgets:
       # with which position -- see nodes/map_match, which pairs them by arrival
       # age. A widget bound to one topic cannot, which is why this one does not
       # rotate with heading.
-      position_zenoh_key: "nodes/bd992/gsof/lat_long_height"
-      position_schema_type: "GsofLatLongHeight"
-      latitude_expression: "latitudeDeg"
-      longitude_expression: "longitudeDeg"
+      latitude:
+        zenoh_key: "nodes/bd992/gsof/lat_long_height"
+        schema_type: "GsofLatLongHeight"
+        expression: "latitudeDeg"
+      longitude:
+        zenoh_key: "nodes/bd992/gsof/lat_long_height"
+        schema_type: "GsofLatLongHeight"
+        expression: "longitudeDeg"
 
       # The road the matcher says we are on, lit up from the same horizon
       # topic road_info reads. Way ids only survive in tiles at z13+, so the
@@ -82,7 +86,6 @@ widgets:
       center_longitude: -117.8557874
       zoom: 9.0
       follow_vehicle: false
-      position_zenoh_key: ""
       # Everything below is optional -- omitted keys keep the defaults in
       # libs/map_render/include/map_render/style.h. This one is tuned for a
       # small overview pane: no buildings, thinner text, and roads pulled back

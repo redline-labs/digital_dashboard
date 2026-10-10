@@ -47,7 +47,7 @@ struct PageStackWidget::Trigger
 
     explicit Trigger(const page_trigger_t& trigger)
         : cfg(trigger)
-        , edge(trigger.edge, std::chrono::milliseconds(trigger.stale_after_ms))
+        , edge(trigger.edge, std::chrono::milliseconds(trigger.source.stale_after_ms))
     {
     }
 };
@@ -148,13 +148,12 @@ void PageStackWidget::start(const std::string& id, std::optional<std::string> ke
         Trigger* raw = trigger.get();
         try
         {
-            raw->subscriber = std::make_unique<pub_sub::ZenohExpressionSubscriber>(
-                trigger_cfg.schema_type, trigger_cfg.expression, trigger_cfg.zenoh_key);
+            raw->subscriber = std::make_unique<pub_sub::ZenohExpressionSubscriber>(trigger_cfg.source);
         }
         catch (const std::exception& e)
         {
             SPDLOG_ERROR("page_stack '{}': trigger on '{}' failed to subscribe: {}", _stack_id,
-                         trigger_cfg.zenoh_key, e.what());
+                         trigger_cfg.source.zenoh_key, e.what());
         }
 
         raw->valid = raw->subscriber && raw->subscriber->isValid();
@@ -163,7 +162,7 @@ void PageStackWidget::start(const std::string& id, std::optional<std::string> ke
             // The stack still works; this one input does not. Said once, with
             // the key, which is what a person would grep the config for.
             SPDLOG_ERROR("page_stack '{}': trigger on '{}' with expression '{}' is invalid and will never fire.",
-                         _stack_id, trigger_cfg.zenoh_key, trigger_cfg.expression);
+                         _stack_id, trigger_cfg.source.zenoh_key, trigger_cfg.source.expression);
         }
         else
         {
@@ -191,7 +190,7 @@ void PageStackWidget::start(const std::string& id, std::optional<std::string> ke
                         {
                             raw->pending.fetch_sub(1, std::memory_order_relaxed);
                             SPDLOG_INFO("page_stack '{}': trigger on '{}' fired: {} '{}'", _stack_id,
-                                        raw->cfg.zenoh_key, reflection::enum_to_string(raw->cfg.action),
+                                        raw->cfg.source.zenoh_key, reflection::enum_to_string(raw->cfg.action),
                                         raw->cfg.page);
                             apply(raw->cfg.action, raw->cfg.page);
                         },
@@ -353,7 +352,7 @@ std::vector<PageStackWidget::TriggerInfo> PageStackWidget::triggerInfo() const
     for (const auto& trigger : _triggers)
     {
         TriggerInfo info;
-        info.zenoh_key = trigger->cfg.zenoh_key;
+        info.zenoh_key = trigger->cfg.source.zenoh_key;
         info.valid = trigger->valid;
         {
             const std::lock_guard<std::mutex> lock(trigger->edge_mutex);

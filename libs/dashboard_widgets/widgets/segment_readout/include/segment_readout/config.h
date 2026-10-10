@@ -8,6 +8,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
@@ -36,20 +37,13 @@ REFLECT_ENUM(SegmentCaptionPosition,
 // the live value over the top, in the same face at the same position, so the two
 // line up cell for cell.
 REFLECT_STRUCT(SegmentReadoutConfig_t,
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
-        "Schema Type", "Data schema type for the subscription"),
-    (std::string, value_expression, "",
-        "Value Expression", "Expression to compute the displayed value"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, stale_after_ms, 0,
-        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never"),
+    (pub_sub::subscription_t, value, pub_sub::subscriptionFor(pub_sub::schema_type_t::VehicleSpeed),
+        "Value", "The reading shown: topic, schema, expression and loss-of-comm timeout"),
 
-    // Shown instead of a subscribed value when there is no expression. This is
-    // how the fixed alphanumeric fields ("OILPRESS") are set.
+    // Shown instead of a subscribed value when `value` is unbound (no key).
+    // This is how the fixed alphanumeric fields ("OILPRESS") are set.
     (std::string, static_text, "",
-        "Static Text", "Fixed text to display when there is no expression"),
+        "Static Text", "Fixed text to display when the value has no key"),
 
     // Fixed text held in the leading cells, with the value right-aligned in what
     // is left. This is what the CDL3's alphanumeric bar actually does: it is one
@@ -94,7 +88,6 @@ inline std::vector<std::string> validate(SegmentReadoutConfig_t& cfg)
     std::vector<std::string> notes;
     config_codec::limits::clampInto<uint16_t>(cfg.digits, 1u, 16u, "digits", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.decimals, 0u, 6u, "decimals", notes);
-    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     return notes;
 }
 

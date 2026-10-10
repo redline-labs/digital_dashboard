@@ -184,10 +184,14 @@ optional; omitting one keeps the default in
   config:
     tileset: socal
     overlay_tilesets: ["tracks"]
-    position_zenoh_key: nodes/bd992/gsof/lat_long_height
-    position_schema_type: GsofLatLongHeight
-    latitude_expression: latitudeDeg
-    longitude_expression: longitudeDeg
+    latitude:
+      zenoh_key: nodes/bd992/gsof/lat_long_height
+      schema_type: GsofLatLongHeight
+      expression: latitudeDeg
+    longitude:
+      zenoh_key: nodes/bd992/gsof/lat_long_height
+      schema_type: GsofLatLongHeight
+      expression: longitudeDeg
     highlight_zenoh_key: nodes/map_match/horizon
     follow_vehicle: true
 ```
@@ -200,9 +204,9 @@ optional; omitting one keeps the default in
 | `min_zoom`, `max_zoom` | The camera's limits, `0` and `17`, not the archive's. Which tile level to fetch comes from the server on every reply; past the archive's depth the widget magnifies its deepest tiles, which stays sharp. Default 17 because by z18 there is too little left in frame to be a map |
 | `interactive` | Off by default. Drag to pan and wheel to zoom; a dashboard is a surface people brace a hand against on a bad road, so a layout has to ask for a map that moves |
 | `follow_vehicle` | Keep the camera on the vehicle. A drag suspends it and the recentre button restores it; the wheel does not suspend it, zooming about the centre instead |
-| `orientation`, `heading_expression` | `north_up` holds the configured bearing; `heading_up` turns the map to the vehicle's heading, which needs the expression |
+| `orientation`, `heading` | `north_up` holds the configured bearing; `heading_up` turns the map to the vehicle's heading, which needs a bound `heading` |
 | `view_mode`, `pitch` | `top_down` or `perspective`; pitch is degrees off straight-down, `45` by default, at most `60` |
-| `position_*`, `latitude_expression`, `longitude_expression` | The position topic, its schema and the two expressions. Empty key for a static map |
+| `latitude`, `longitude` | Subscriptions (key, schema, expression, `stale_after_ms`) for the position, usually on one topic. Empty keys for a static map |
 | `highlight_zenoh_key`, `highlight_color`, `highlight_extra_width` | The matched road from `map_match`, recoloured. Way ids only survive in tiles at z13 and deeper, so the highlight quietly disappears further out |
 | `marker_*`, `track_*`, `show_track`, `track_points` | The vehicle marker, its outline, and the trail (`600` points) |
 | `style.*` | 21 colours, `label_font`, `label_size`, `label_halo_width`, `label_spacing`, `label_repeat_distance` (`250` px between repeats of a road name; `0` is once per viewport), `road_width_scale`, and the `show_*` toggles including `show_road_labels` and `show_water_labels` |

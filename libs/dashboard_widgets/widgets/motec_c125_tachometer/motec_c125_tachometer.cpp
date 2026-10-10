@@ -91,10 +91,8 @@ MotecC125Tachometer::MotecC125Tachometer(const MotecC125TachometerConfig_t& cfg,
     _digitFont = QFont(qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica"), 40, QFont::Bold);
     _digitFont.setItalic(_cfg.italic);
 
-    _expression_parser = dashboard::makeExpressionSubscription<float>(
-        _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
-        this, &MotecC125Tachometer::setRpm, 
-        std::chrono::milliseconds(_cfg.stale_after_ms));
+    _expression_parser =
+        dashboard::makeExpressionSubscription<float>(_cfg.rpm, this, &MotecC125Tachometer::setRpm);
 }
 
 void MotecC125Tachometer::setRpm(float rpm)

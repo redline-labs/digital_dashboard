@@ -63,10 +63,10 @@ void pump(std::chrono::milliseconds duration)
 ValueReadoutConfig_t configFor(const std::string& key, std::uint32_t stale_after_ms)
 {
     ValueReadoutConfig_t config;
-    config.zenoh_key = key;
-    config.schema_type = pub_sub::schema_type_t::EngineRpm;
-    config.value_expression = "rpm";
-    config.stale_after_ms = stale_after_ms;
+    config.value.zenoh_key = key;
+    config.value.schema_type = pub_sub::schema_type_t::EngineRpm;
+    config.value.expression = "rpm";
+    config.value.stale_after_ms = stale_after_ms;
     return config;
 }
 
@@ -154,7 +154,7 @@ int main(int argc, char** argv)
         // the same path as a stream that stopped, because a binding that can
         // never deliver has been quiet since it was created.
         ValueReadoutConfig_t broken = configFor(key, 250);
-        broken.value_expression = "this is not an expression";
+        broken.value.expression = "this is not an expression";
         ValueReadoutWidget widget(broken);
         widget.resize(240, 160);
         const QImage before = renderOf(widget);

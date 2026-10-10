@@ -59,7 +59,7 @@ private:
 	// Dashes replace the number while the stream is quiet: a readout holding
 	// its last value looks like a reading. The subscription is the only place
 	// this is recorded, so there is nothing here to keep in step with it.
-	bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
+	bool valueStale() const { return dashboard::isStale(_expression_parser); }
 };
 
 #endif // VALUE_READOUT_WIDGET_H

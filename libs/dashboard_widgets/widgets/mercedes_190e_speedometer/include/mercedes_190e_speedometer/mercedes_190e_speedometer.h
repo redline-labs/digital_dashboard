@@ -128,10 +128,10 @@ private:
     // The two streams are independent: a speedometer whose odometer topic has
     // stopped still shows the speed, and the drums show dashes. Each
     // subscription is the only place its own answer is recorded.
-    bool speedStale() const { return speed_expression_parser_ && speed_expression_parser_->isStale(); }
+    bool speedStale() const { return dashboard::isStale(speed_expression_parser_); }
     bool odometerStale() const
     {
-        return odometer_expression_parser_ && odometer_expression_parser_->isStale();
+        return dashboard::isStale(odometer_expression_parser_);
     }
 };
 

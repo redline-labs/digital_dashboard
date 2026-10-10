@@ -30,10 +30,8 @@ CenterBarWidget::CenterBarWidget(const CenterBarConfig_t& cfg, QWidget* parent) 
     const QString family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "Helvetica");
     _label_font = QFont(family, 9, QFont::DemiBold);
 
-    _expression_parser = dashboard::makeExpressionSubscription<double>(
-        _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-        this, &CenterBarWidget::setValue, 
-        std::chrono::milliseconds(_cfg.stale_after_ms));
+    _expression_parser =
+        dashboard::makeExpressionSubscription<double>(_cfg.value, this, &CenterBarWidget::setValue);
 }
 
 void CenterBarWidget::setValue(double value)

@@ -460,15 +460,13 @@ class MapWidget : public QWidget
     // show by itself: a marker parked on the last fix looks like a stationary
     // vehicle.
     //
-    // Latitude, longitude and heading share a topic and a timeout, so any one
-    // of them going quiet means the position has. Each is bound only when its
-    // expression is configured, and one that is not bound cannot be stale.
+    // Latitude, longitude and heading usually share a topic, so any one of
+    // them going quiet means the position has. One that is not bound cannot be
+    // stale.
     bool positionStale() const
     {
-        const auto stale = [](const dashboard::ExpressionSubscriptionPtr<double>& s)
-        { return s && s->isStale(); };
-        return stale(mLatitudeSubscription) || stale(mLongitudeSubscription) ||
-               stale(mHeadingSubscription);
+        return dashboard::isStale(mLatitudeSubscription) ||
+               dashboard::isStale(mLongitudeSubscription) || dashboard::isStale(mHeadingSubscription);
     }
 };
 

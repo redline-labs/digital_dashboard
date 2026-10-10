@@ -20,14 +20,10 @@ Mercedes190ESpeedometer::Mercedes190ESpeedometer(const Mercedes190ESpeedometerCo
     odometer_value_(cfg.odometer_value)
 {
     speed_expression_parser_ = dashboard::makeExpressionSubscription<float>(
-        cfg_.schema_type, cfg_.speed_expression, cfg_.zenoh_key,
-        this, &Mercedes190ESpeedometer::setSpeed,
-        std::chrono::milliseconds(cfg_.speed_stale_after_ms));
+        cfg_.speed, this, &Mercedes190ESpeedometer::setSpeed);
 
     odometer_expression_parser_ = dashboard::makeExpressionSubscription<int>(
-        cfg_.odometer_schema_type, cfg_.odometer_expression, cfg_.odometer_zenoh_key,
-        this, &Mercedes190ESpeedometer::setOdometerValue,
-        std::chrono::milliseconds(cfg_.odometer_stale_after_ms));
+        cfg_.odometer, this, &Mercedes190ESpeedometer::setOdometerValue);
 
     QString font_family = qt_helpers::loadResourceFont(":/fonts/futura.ttf", "sans-serif");
 

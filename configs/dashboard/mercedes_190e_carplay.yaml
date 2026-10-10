@@ -13,12 +13,14 @@ windows:
         config:
           odometer_value: 123456
           max_speed: 160
-          zenoh_key: vehicle/speed_mps
-          schema_type: VehicleSpeed
-          speed_expression: mps_to_mph(speedMps)
-          odometer_expression: totalMiles
-          odometer_zenoh_key: vehicle/odometer
-          odometer_schema_type: VehicleOdometer
+          speed:
+            zenoh_key: vehicle/speed_mps
+            schema_type: VehicleSpeed
+            expression: mps_to_mph(speedMps)
+          odometer:
+            zenoh_key: vehicle/odometer
+            schema_type: VehicleOdometer
+            expression: totalMiles
           shift_box_markers:
             - 28
             - 54
@@ -32,9 +34,10 @@ windows:
           max_rpm: 8000
           redline_rpm: 7000
           show_clock: true
-          zenoh_key: vehicle/engine/rpm
-          schema_type: EngineRpm
-          rpm_expression: rpm
+          rpm:
+            zenoh_key: vehicle/engine/rpm
+            schema_type: EngineRpm
+            expression: rpm
       - x: 50
         y: 400
         width: 30
@@ -44,9 +47,10 @@ windows:
           telltale_type: battery
           warning_color: "#FF0000"
           normal_color: "#333333"
-          zenoh_key: vehicle/telltales/battery_warning
-          schema_type: BatteryWarning
-          condition_expression: batteryVoltage < 12.0
+          condition:
+            zenoh_key: vehicle/telltales/battery_warning
+            schema_type: BatteryWarning
+            expression: batteryVoltage < 12.0
   - name: carplay
     width: 1200
     height: 600
@@ -66,36 +70,40 @@ windows:
           default_page: carplay
           triggers:
             # The manufacturer tile on CarPlay's home screen. kind 0 is oemButton.
-            - zenoh_key: nodes/carplay/ui_event
-              schema_type: CarPlayUiEvent
-              expression: kind == 0
+            - source:
+                zenoh_key: nodes/carplay/ui_event
+                schema_type: CarPlayUiEvent
+                expression: kind == 0
               edge: on_sample
               action: go_to
               page: vehicle
             # The phone took the screen back while CarPlay was hidden -- Siri, or
             # a call. kind 1 is screenRequested. Only sent with the node's
             # screen_handover enabled.
-            - zenoh_key: nodes/carplay/ui_event
-              schema_type: CarPlayUiEvent
-              expression: kind == 1
+            - source:
+                zenoh_key: nodes/carplay/ui_event
+                schema_type: CarPlayUiEvent
+                expression: kind == 1
               edge: on_sample
               action: go_to
               page: carplay
             # Grayhill button 1. The keypad reports its whole state, so this
             # fires on the press, and never on the first report after startup.
-            - zenoh_key: nodes/grayhill_keypad/buttons
-              schema_type: GrayhillButtons
-              expression: bit(buttons1To8, 0)
+            - source:
+                zenoh_key: nodes/grayhill_keypad/buttons
+                schema_type: GrayhillButtons
+                expression: bit(buttons1To8, 0)
               edge: rising
               action: next
             # A phone being plugged in brings CarPlay forward. The node re-sends
             # the session every second, so five seconds of silence means the node
             # restarted and the next "connected" is a first report, not a plug-in.
-            - zenoh_key: nodes/carplay/session
-              schema_type: CarPlaySessionState
-              expression: deviceConnected
+            - source:
+                zenoh_key: nodes/carplay/session
+                schema_type: CarPlaySessionState
+                expression: deviceConnected
+                stale_after_ms: 5000
               edge: rising
-              stale_after_ms: 5000
               action: go_to
               page: carplay
             # An incoming call (state 1) could bring CarPlay forward too:
@@ -154,10 +162,11 @@ windows:
                 type: value_readout
                 config:
                   label_text: Speed
-                  zenoh_key: vehicle/speed_mps
-                  schema_type: VehicleSpeed
-                  value_expression: mps_to_mph(speedMps)
-                  stale_after_ms: 2000
+                  value:
+                    zenoh_key: vehicle/speed_mps
+                    schema_type: VehicleSpeed
+                    expression: mps_to_mph(speedMps)
+                    stale_after_ms: 2000
                   units: " mph"
                   label_color: "#FFA500"
                   value_color: "#FFFFFF"
@@ -169,10 +178,11 @@ windows:
                 type: value_readout
                 config:
                   label_text: Engine
-                  zenoh_key: vehicle/engine/rpm
-                  schema_type: EngineRpm
-                  value_expression: rpm
-                  stale_after_ms: 2000
+                  value:
+                    zenoh_key: vehicle/engine/rpm
+                    schema_type: EngineRpm
+                    expression: rpm
+                    stale_after_ms: 2000
                   units: " rpm"
                   label_color: "#FFA500"
                   value_color: "#FFFFFF"
@@ -184,10 +194,11 @@ windows:
                 type: value_readout
                 config:
                   label_text: Oil
-                  zenoh_key: vehicle/engine/rpm
-                  schema_type: EngineRpm
-                  value_expression: oilPressurePsi
-                  stale_after_ms: 2000
+                  value:
+                    zenoh_key: vehicle/engine/rpm
+                    schema_type: EngineRpm
+                    expression: oilPressurePsi
+                    stale_after_ms: 2000
                   decimals: 1
                   units: " psi"
                   label_color: "#FFA500"

@@ -37,9 +37,10 @@ beside `config:`. Each page has a `name`, an optional `in_cycle`, and a
   config:
     default_page: carplay
     triggers:
-      - zenoh_key: nodes/grayhill_keypad/buttons
-        schema_type: GrayhillButtons
-        expression: bit(buttons1To8, 0)
+      - source:
+          zenoh_key: nodes/grayhill_keypad/buttons
+          schema_type: GrayhillButtons
+          expression: bit(buttons1To8, 0)
         edge: rising
         action: next
   pages:
@@ -101,11 +102,8 @@ applies its action when the expression fires.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `zenoh_key` | | Topic to watch. |
-| `schema_type` | `GrayhillButtons` | Schema of that topic. |
-| `expression` | | Non-zero is true. |
+| `source` | schema `GrayhillButtons` | A [subscription](widgets.html#subscriptions): the topic to watch, its schema, and an expression where non-zero is true. Its `stale_after_ms` applies to `rising` only: a gap this long makes the next message a first message again. |
 | `edge` | `rising` | `rising` fires when the expression becomes true; `on_sample` fires on every true message. |
-| `stale_after_ms` | `0` | `rising` only: a gap this long makes the next message a first message again. |
 | `action`, `page` | `next` | What to apply, as for a command. |
 
 Use `rising` for a topic that reports a state, such as a keypad's button
@@ -115,7 +113,7 @@ nothing. Use `on_sample` for a topic where each message is one event, such as
 `CarPlayUiEvent`.
 
 {: .warning }
-Leave `stale_after_ms` at 0 for a source that only sends on change, such as a
+Leave `source.stale_after_ms` at 0 for a source that only sends on change, such as a
 keypad TPDO. After a quiet spell longer than the timeout the next message would
 count as a first message, and the press it carries would only prime the trigger.
 

@@ -64,7 +64,7 @@ private:
     // stream is quiet.
     // The subscription is the only place this is recorded, so there is
     // nothing here to keep in step with it.
-    bool rpmStale() const { return _expression_parser && _expression_parser->isStale(); }
+    bool rpmStale() const { return dashboard::isStale(_expression_parser); }
 };
 
 #endif // MOTEC_C125_TACHOMETER_H

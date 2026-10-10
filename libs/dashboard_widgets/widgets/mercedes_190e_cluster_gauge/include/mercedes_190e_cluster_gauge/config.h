@@ -6,7 +6,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
-#include "pub_sub/topic_key.h"
+#include "pub_sub/subscription.h"
 #include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(sub_gauge_config_t,
@@ -14,15 +14,8 @@ REFLECT_STRUCT(sub_gauge_config_t,
         "Minimum Value", "Reading at the empty end of the sweep"),
     (float, max_value, 100.0,
         "Maximum Value", "Reading at the full end of the sweep"),
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
-        "Schema Type", "Data schema type for the subscription"),
-    (std::string, value_expression, "",
-        "Value Expression", "Expression evaluated against the message to produce the reading"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, stale_after_ms, 0,
-        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
+    (pub_sub::subscription_t, source, pub_sub::subscription_t{},
+        "Source", "The reading: topic, schema, expression and loss-of-comm timeout")
 )
 
 // The bottom sub-gauge on a real 190E cluster is not a tick scale. It is a
@@ -59,30 +52,20 @@ REFLECT_STRUCT(Mercedes190EClusterGaugeConfig_t,
 // Each sub-gauge clamps incoming readings to its own min/max. Those come
 // straight from YAML with nothing checking their order, and std::clamp's
 // precondition is !(max < min) -- an inverted pair was undefined behaviour, four
-// times over.
-inline std::vector<std::string> validate(Mercedes190EClusterGaugeConfig_t& cfg)
+// times over. Declared on the sub-gauge, so applyLimits runs it for all four.
+inline std::vector<std::string> validate(sub_gauge_config_t& gauge)
 {
     std::vector<std::string> notes;
-    config_codec::limits::orderRange(cfg.fuel_gauge.min_value, cfg.fuel_gauge.max_value,
-                                  "fuel_gauge", notes);
-    config_codec::limits::orderRange(cfg.right_gauge.min_value, cfg.right_gauge.max_value,
-                                  "right_gauge", notes);
-    config_codec::limits::orderRange(cfg.bottom_gauge.min_value, cfg.bottom_gauge.max_value,
-                                  "bottom_gauge", notes);
-    config_codec::limits::orderRange(cfg.left_gauge.min_value, cfg.left_gauge.max_value,
-                                  "left_gauge", notes);
-    config_codec::limits::clampStaleAfter(cfg.fuel_gauge.stale_after_ms, "fuel_gauge.stale_after_ms",
-                                          notes);
-    config_codec::limits::clampStaleAfter(cfg.right_gauge.stale_after_ms,
-                                          "right_gauge.stale_after_ms", notes);
-    config_codec::limits::clampStaleAfter(cfg.bottom_gauge.stale_after_ms,
-                                          "bottom_gauge.stale_after_ms", notes);
-    config_codec::limits::clampStaleAfter(cfg.left_gauge.stale_after_ms, "left_gauge.stale_after_ms",
-                                          notes);
-    // Drives where along the band the red fill starts. Outside [0, 1] it either
-    // runs backwards off the band or paints past its end.
-    config_codec::limits::clampInto(cfg.economy_sweep.red_start_fraction, 0.0f, 1.0f,
-                                 "economy_sweep.red_start_fraction", notes);
+    config_codec::limits::orderRange(gauge.min_value, gauge.max_value, "min_value/max_value", notes);
+    return notes;
+}
+
+// Drives where along the band the red fill starts. Outside [0, 1] it either
+// runs backwards off the band or paints past its end.
+inline std::vector<std::string> validate(economy_sweep_config_t& sweep)
+{
+    std::vector<std::string> notes;
+    config_codec::limits::clampInto(sweep.red_start_fraction, 0.0f, 1.0f, "red_start_fraction", notes);
     return notes;
 }
 

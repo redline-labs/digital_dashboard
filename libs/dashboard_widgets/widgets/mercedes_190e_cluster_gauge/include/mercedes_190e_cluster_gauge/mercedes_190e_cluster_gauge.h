@@ -90,14 +90,10 @@ private:
     // often bound to four different nodes, and one of them stopping should not
     // blank the other three. Each subscription is the only place its own answer
     // is recorded.
-    static bool isStale(const dashboard::ExpressionSubscriptionPtr<float>& parser)
-    {
-        return parser && parser->isStale();
-    }
-    bool fuelGaugeStale() const { return isStale(top_gauge_expression_parser_); }
-    bool oilPressureGaugeStale() const { return isStale(right_gauge_expression_parser_); }
-    bool economyGaugeStale() const { return isStale(bottom_gauge_expression_parser_); }
-    bool coolantTemperatureGaugeStale() const { return isStale(left_gauge_expression_parser_); }
+    bool fuelGaugeStale() const { return dashboard::isStale(top_gauge_expression_parser_); }
+    bool oilPressureGaugeStale() const { return dashboard::isStale(right_gauge_expression_parser_); }
+    bool economyGaugeStale() const { return dashboard::isStale(bottom_gauge_expression_parser_); }
+    bool coolantTemperatureGaugeStale() const { return dashboard::isStale(left_gauge_expression_parser_); }
 
     QSvgRenderer fuel_icon_svg_renderer_;
     QSvgRenderer oil_icon_svg_renderer_;

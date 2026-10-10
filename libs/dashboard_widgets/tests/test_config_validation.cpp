@@ -6,6 +6,7 @@
 // the loader previously accepted in silence or rejected without saying where.
 
 #include "dashboard/app_config.h"
+#include "config_codec/config_apply_limits.h"
 #include "config_codec/config_limits.h"
 #include "dashboard/widget_registry.h"
 
@@ -86,9 +87,10 @@ widgets:
     height: 100
     config:
       max_rpm: 6000
-      zenoh_key: "vehicle/engine/rpm"
-      schema_type: "EngineRpm"
-      rpm_expression: "rpm"
+      rpm:
+        zenoh_key: "vehicle/engine/rpm"
+        schema_type: "EngineRpm"
+        expression: "rpm"
 )";
 
 void testAValidConfigIsSilent()
@@ -106,10 +108,11 @@ name: "typo"
 widgets:
   - type: motec_cdl3_tachometer
     config:
-      zenoh_kye: "vehicle/engine/rpm"
+      rpm:
+        zenoh_kye: "vehicle/engine/rpm"
 )");
 
-    const Issue* issue = find(issues, "widgets[0].config.zenoh_kye");
+    const Issue* issue = find(issues, "widgets[0].config.rpm.zenoh_kye");
     check(issue != nullptr, "a mistyped config key is reported at its full path, got:" + dump(issues));
     if (issue)
     {
@@ -185,10 +188,11 @@ void testBadEnumValueNamesTheAlternatives()
 widgets:
   - type: motec_cdl3_tachometer
     config:
-      schema_type: "EngineRpmm"
+      rpm:
+        schema_type: "EngineRpmm"
 )");
 
-    const Issue* issue = find(issues, "widgets[0].config.schema_type");
+    const Issue* issue = find(issues, "widgets[0].config.rpm.schema_type");
     check(issue != nullptr, "a bad enum value is reported at its path, got:" + dump(issues));
     if (issue)
     {
@@ -240,13 +244,14 @@ widgets:
   - type: motec_cdl3_tachometer
     config:
       max_rpm: "not a number"
-      zenoh_kye: "vehicle/engine/rpm"
-      schema_type: "EngineRpmm"
+      rpm:
+        zenoh_kye: "vehicle/engine/rpm"
+        schema_type: "EngineRpmm"
 )");
 
     check(find(issues, "widgets[0].config.max_rpm") != nullptr &&
-              find(issues, "widgets[0].config.zenoh_kye") != nullptr &&
-              find(issues, "widgets[0].config.schema_type") != nullptr,
+              find(issues, "widgets[0].config.rpm.zenoh_kye") != nullptr &&
+              find(issues, "widgets[0].config.rpm.schema_type") != nullptr,
           "three problems in one widget are all reported, got:" + dump(issues));
 }
 
@@ -342,9 +347,40 @@ widgets:
 widgets:
   - type: value_readout
     config:
-      zenoh_key: ""
+      value:
+        zenoh_key: ""
 )")),
           "an empty key is unbound, not an error");
+}
+
+// A layout written before bindings became subscription_t fields. "unknown key,
+// ignored" would load it with every binding gone, so the old keys are refused
+// and the error names where each one went.
+void testMovedBindingKeysAreRefusedWithTheirNewHome()
+{
+    const auto issues = issuesFor(R"(
+widgets:
+  - type: motec_cdl3_tachometer
+    config:
+      zenoh_key: "vehicle/engine/rpm"
+      rpm_expression: "rpm"
+)");
+
+    const Issue* expr = find(issues, "widgets[0].config.rpm_expression");
+    check(expr != nullptr && expr->severity == Issue::Severity::error &&
+              expr->message.find("rpm.expression") != std::string::npos,
+          "an old expression key is an error naming its new path, got:" + dump(issues));
+    const Issue* key = find(issues, "widgets[0].config.zenoh_key");
+    check(key != nullptr && key->severity == Issue::Severity::error,
+          "and so is the old flat zenoh_key");
+
+    check(!hasError(issuesFor(R"(
+widgets:
+  - type: motec_cdl3_tachometer
+    config:
+      some_unrelated_typo: 1
+)")),
+          "an ordinary unknown key is still only a warning");
 }
 
 // ---------------------------------------------------------------- window lists
@@ -449,7 +485,7 @@ void testFullScaleIsNeverZero()
 {
     MotecCdl3TachometerConfig_t cdl3;
     cdl3.max_rpm = 0;
-    check(!validate(cdl3).empty(), "a zero max_rpm is reported");
+    check(!config_codec::applyLimits(cdl3).empty(), "a zero max_rpm is reported");
     check(cdl3.max_rpm > 0, "a zero max_rpm is raised off zero, so nothing divides by it");
 }
 
@@ -460,7 +496,7 @@ void testFullScaleIsCapped()
     // 43 million ticks.
     MotecCdl3TachometerConfig_t cdl3;
     cdl3.max_rpm = 4294967200u;
-    check(!validate(cdl3).empty(), "an absurd max_rpm is reported");
+    check(!config_codec::applyLimits(cdl3).empty(), "an absurd max_rpm is reported");
     check(cdl3.max_rpm <= config_codec::limits::kMaxRpmCeiling,
           "an absurd max_rpm is capped to something drawable");
 }
@@ -470,7 +506,7 @@ void testRedlineCannotExceedFullScale()
     Mercedes190ETachometerConfig_t tach;
     tach.max_rpm = 7000;
     tach.redline_rpm = 9000;
-    check(!validate(tach).empty(), "a redline above max_rpm is reported");
+    check(!config_codec::applyLimits(tach).empty(), "a redline above max_rpm is reported");
     check(tach.redline_rpm <= tach.max_rpm,
           "a redline above max_rpm is pulled back, so the red zone is not drawn backwards");
 }
@@ -482,7 +518,7 @@ void testInvertedRangesAreOrdered()
     Mercedes190EClusterGaugeConfig_t cluster;
     cluster.fuel_gauge.min_value = 100.0f;
     cluster.fuel_gauge.max_value = 0.0f;
-    check(!validate(cluster).empty(), "an inverted range is reported");
+    check(!config_codec::applyLimits(cluster).empty(), "an inverted range is reported");
     check(cluster.fuel_gauge.min_value < cluster.fuel_gauge.max_value,
           "an inverted range comes back the right way round");
 
@@ -490,7 +526,7 @@ void testInvertedRangesAreOrdered()
     Mercedes190EClusterGaugeConfig_t flat;
     flat.left_gauge.min_value = 50.0f;
     flat.left_gauge.max_value = 50.0f;
-    check(!validate(flat).empty(), "a zero-width range is reported");
+    check(!config_codec::applyLimits(flat).empty(), "a zero-width range is reported");
     check(flat.left_gauge.min_value < flat.left_gauge.max_value, "a zero-width range is widened");
 }
 
@@ -501,13 +537,13 @@ void testEconomyRedStartStaysOnTheBand()
     // the sub-band runs backwards and paints past the uneconomical end.
     Mercedes190EClusterGaugeConfig_t below;
     below.economy_sweep.red_start_fraction = -0.5f;
-    check(!validate(below).empty(), "a negative red_start_fraction is reported");
+    check(!config_codec::applyLimits(below).empty(), "a negative red_start_fraction is reported");
     check(below.economy_sweep.red_start_fraction >= 0.0f,
           "a negative red_start_fraction is pulled onto the band");
 
     Mercedes190EClusterGaugeConfig_t above;
     above.economy_sweep.red_start_fraction = 4.0f;
-    check(!validate(above).empty(), "a red_start_fraction past the end is reported");
+    check(!config_codec::applyLimits(above).empty(), "a red_start_fraction past the end is reported");
     check(above.economy_sweep.red_start_fraction <= 1.0f,
           "a red_start_fraction past the end is pulled back onto the band");
 
@@ -515,7 +551,7 @@ void testEconomyRedStartStaysOnTheBand()
     // logs a spurious adjustment at load.
     Mercedes190EClusterGaugeConfig_t stock;
     const float before = stock.economy_sweep.red_start_fraction;
-    (void)validate(stock);
+    (void)config_codec::applyLimits(stock);
     check(stock.economy_sweep.red_start_fraction == before,
           "the default red_start_fraction is left alone");
 }
@@ -527,12 +563,12 @@ void testCallTakeoverTimingsStayBounded()
     // an unbounded linger holds the call face up long after the call ended.
     NowPlayingConfig_t slow;
     slow.transition_ms = 60000;
-    check(!validate(slow).empty(), "an absurd transition_ms is reported");
+    check(!config_codec::applyLimits(slow).empty(), "an absurd transition_ms is reported");
     check(slow.transition_ms <= 2000, "an absurd transition_ms is pulled back");
 
     NowPlayingConfig_t sticky;
     sticky.call_linger_ms = 60000;
-    check(!validate(sticky).empty(), "an absurd call_linger_ms is reported");
+    check(!config_codec::applyLimits(sticky).empty(), "an absurd call_linger_ms is reported");
     check(sticky.call_linger_ms <= 10000, "an absurd call_linger_ms is pulled back");
 
     // Zero is legal on both -- an instant cut, and no lingering "Call ended" --
@@ -540,7 +576,7 @@ void testCallTakeoverTimingsStayBounded()
     NowPlayingConfig_t instant;
     instant.transition_ms = 0;
     instant.call_linger_ms = 0;
-    check(validate(instant).empty(), "zero timings are left alone");
+    check(config_codec::applyLimits(instant).empty(), "zero timings are left alone");
 }
 
 void testUpdateRateCannotBecomeAZeroMillisecondTimer()
@@ -549,13 +585,13 @@ void testUpdateRateCannotBecomeAZeroMillisecondTimer()
     // became start(0) -- a repaint on every pass of the event loop.
     SparklineConfig_t spark;
     spark.update_rate = 2000;
-    check(!validate(spark).empty(), "an absurd update_rate is reported");
+    check(!config_codec::applyLimits(spark).empty(), "an absurd update_rate is reported");
     check(spark.update_rate > 0 && 1000 / spark.update_rate > 0,
           "the clamped update_rate still yields a non-zero timer interval");
 
     SparklineConfig_t zero;
     zero.update_rate = 0;
-    (void)validate(zero);
+    (void)config_codec::applyLimits(zero);
     check(zero.update_rate > 0, "a zero update_rate is raised off zero");
 }
 
@@ -563,7 +599,7 @@ void testOverlongListsAreCapped()
 {
     Mercedes190ESpeedometerConfig_t speedo;
     speedo.shift_box_markers.assign(5000, 42);
-    check(!validate(speedo).empty(), "an overlong marker list is reported");
+    check(!config_codec::applyLimits(speedo).empty(), "an overlong marker list is reported");
     check(speedo.shift_box_markers.size() <= config_codec::limits::kMaxMarkers,
           "an overlong marker list is truncated, so paint stays bounded");
 }
@@ -574,7 +610,7 @@ void testOdometerCannotOutrunItsDigits()
     // wrong ones: the zenoh setter clamped, the config path did not.
     Mercedes190ESpeedometerConfig_t speedo;
     speedo.odometer_value = 12345678;
-    check(!validate(speedo).empty(), "an out-of-range odometer value is reported");
+    check(!config_codec::applyLimits(speedo).empty(), "an out-of-range odometer value is reported");
     check(speedo.odometer_value <= 999999, "an out-of-range odometer value is clamped to six digits");
 }
 
@@ -582,14 +618,14 @@ void testAReasonableConfigIsLeftAlone()
 {
     MotecCdl3TachometerConfig_t cdl3;
     cdl3.max_rpm = 8000;
-    check(validate(cdl3).empty(), "a sensible config produces no adjustments");
+    check(config_codec::applyLimits(cdl3).empty(), "a sensible config produces no adjustments");
     check(cdl3.max_rpm == 8000, "a sensible config is not modified");
 
     SparklineConfig_t spark;
     spark.update_rate = 30;
     spark.min_value = 0.0;
     spark.max_value = 100.0;
-    check(validate(spark).empty(), "a sensible sparkline config produces no adjustments");
+    check(config_codec::applyLimits(spark).empty(), "a sensible sparkline config produces no adjustments");
     check(spark.update_rate == 30 && spark.max_value == 100.0,
           "a sensible sparkline config is not modified");
 }
@@ -614,9 +650,10 @@ windows:
         config:
           default_page: carplay
           triggers:
-            - zenoh_key: nodes/grayhill_keypad/buttons
-              schema_type: GrayhillButtons
-              expression: bit(buttons1To8, 0)
+            - source:
+                zenoh_key: nodes/grayhill_keypad/buttons
+                schema_type: GrayhillButtons
+                expression: bit(buttons1To8, 0)
               action: go_to
               page: vehicle
 )" + stack_extra + R"(
@@ -789,7 +826,7 @@ void testATriggerNeedsAKeyAndAnExpression()
     std::string doc = stackDocument();
     doc.replace(doc.find("expression: bit(buttons1To8, 0)"), std::string("expression: bit(buttons1To8, 0)").size(),
                 "expression: \"\"");
-    expectError(doc, "windows[0].widgets[0].config.triggers[0].expression", "a trigger with no expression");
+    expectError(doc, "windows[0].widgets[0].config.triggers[0].source.expression", "a trigger with no expression");
 }
 
 }  // namespace
@@ -810,6 +847,7 @@ int main()
     testMalformedColoursAreReported();
     testWellFormedColoursAreAccepted();
     testKeysAreCheckedWhateverTheyAreCalled();
+    testMovedBindingKeysAreRefusedWithTheirNewHome();
 
     testAValidWindowListIsSilent();
     testWindowListPathsNameTheWindow();

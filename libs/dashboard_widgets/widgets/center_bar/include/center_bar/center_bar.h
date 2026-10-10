@@ -47,7 +47,7 @@ class CenterBarWidget : public QWidget
     // marker parked at centre is a reading.
     // The subscription is the only place this is recorded, so there is
     // nothing here to keep in step with it.
-    bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
+    bool valueStale() const { return dashboard::isStale(_expression_parser); }
 };
 
 #endif // CENTER_BAR_WIDGET_H

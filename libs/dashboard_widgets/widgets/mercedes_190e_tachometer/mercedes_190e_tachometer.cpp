@@ -32,9 +32,7 @@ Mercedes190ETachometer::Mercedes190ETachometer(Mercedes190ETachometerConfig_t cf
       m_currentTime(QTime::currentTime()) // Initialize current time
 {
     rpm_expression_parser_ = dashboard::makeExpressionSubscription<float>(
-        _cfg.schema_type, _cfg.rpm_expression, _cfg.zenoh_key,
-        this, &Mercedes190ETachometer::setRpm, 
-        std::chrono::milliseconds(_cfg.stale_after_ms));
+        _cfg.rpm, this, &Mercedes190ETachometer::setRpm);
 
     m_fontFamily = qt_helpers::loadResourceFont(":/fonts/futura.ttf");
     // Adjusted font sizes based on new reference image (numbers are quite large)

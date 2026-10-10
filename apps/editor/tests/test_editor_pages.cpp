@@ -71,9 +71,10 @@ windows:
         config:
           default_page: first
           triggers:
-            - zenoh_key: nodes/grayhill_keypad/buttons
-              schema_type: GrayhillButtons
-              expression: bit(buttons1To8, 0)
+            - source:
+                zenoh_key: nodes/grayhill_keypad/buttons
+                schema_type: GrayhillButtons
+                expression: bit(buttons1To8, 0)
               action: go_to
               page: second
         pages:

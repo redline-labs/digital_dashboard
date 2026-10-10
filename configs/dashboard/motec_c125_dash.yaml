@@ -35,9 +35,10 @@ widgets:
       ring_color: "#D2D2D2"
       digit_color: "#FFFFFF"
 
-      zenoh_key: "vehicle/engine/rpm"
-      schema_type: "EngineRpm"
-      rpm_expression: "rpm"
+      rpm:
+        zenoh_key: "vehicle/engine/rpm"
+        schema_type: "EngineRpm"
+        expression: "rpm"
 
   # ---- Left column -------------------------------------------------------
   - type: value_readout
@@ -51,9 +52,10 @@ widgets:
       italic: true
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius"
 
   - type: value_readout
     x: 10
@@ -66,9 +68,10 @@ widgets:
       italic: true
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius - 3"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius - 3"
 
   - type: value_readout
     x: 10
@@ -81,9 +84,10 @@ widgets:
       italic: true
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius + 18"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius + 18"
 
   # ---- Right column ------------------------------------------------------
   - type: value_readout
@@ -97,9 +101,10 @@ widgets:
       italic: true
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius"
 
   - type: value_readout
     x: 550
@@ -112,9 +117,10 @@ widgets:
       italic: true
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius * 5"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius * 5"
 
   - type: value_readout
     x: 550
@@ -127,9 +133,10 @@ widgets:
       italic: true
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "temperatureCelsius * 3.8"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "temperatureCelsius * 3.8"
 
   # ---- Lap timing strip --------------------------------------------------
   - type: background_rect
@@ -154,9 +161,10 @@ widgets:
       format: lap_time
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "144.5"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "144.5"
 
   - type: value_readout
     x: 280
@@ -171,9 +179,10 @@ widgets:
       show_sign: true
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "(temperatureCelsius - 90) * 0.05"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "(temperatureCelsius - 90) * 0.05"
 
   - type: value_readout
     x: 550
@@ -187,9 +196,10 @@ widgets:
       format: lap_time
       label_color: "#FF9500"
       value_color: "#FFFFFF"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "144.5 - (temperatureCelsius - 90) * 0.05"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "144.5 - (temperatureCelsius - 90) * 0.05"
 
   # The gain/loss strip under the lap figures: LOSS to the left, GAIN to the
   # right, and a marker that sits at the centre when you are on the reference.
@@ -209,6 +219,7 @@ widgets:
       bad_color: "#C4281E"
       label_color: "#9A9A9A"
       tick_color: "#6E6E6E"
-      zenoh_key: "vehicle/engine/temperature_celsius"
-      schema_type: "EngineTemperature"
-      value_expression: "(temperatureCelsius - 90) * 0.05"
+      value:
+        zenoh_key: "vehicle/engine/temperature_celsius"
+        schema_type: "EngineTemperature"
+        expression: "(temperatureCelsius - 90) * 0.05"

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/subscription.h"
 #include "pub_sub/topic_key.h"
 #include "helpers/color.h"
 #include "config_codec/config_limits.h"
@@ -28,15 +29,8 @@ REFLECT_STRUCT(SparklineConfig_t,
         "Units Font Size", "Font size for the units label"),
     (uint16_t, update_rate, 30,
         "Update Rate (Hz)", "Graph update rate in Hertz"),
-    (pub_sub::topic_key_t, zenoh_key, "",
-        "Zenoh Key", "Zenoh topic key to subscribe to"),
-    (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
-        "Schema Type", "Data schema type for the subscription"),
-    (std::string, value_expression, "",
-        "Value Expression", "Expression to extract/compute the value"),
-    // How long a gap in the stream means "no data". 0 never reports one.
-    (uint32_t, stale_after_ms, 0,
-        "Stale After (ms)", "Show the no-data look when nothing arrives for this long; 0 = never")
+    (pub_sub::subscription_t, value, pub_sub::subscriptionFor(pub_sub::schema_type_t::VehicleSpeed),
+        "Value", "The reading shown: topic, schema, expression and loss-of-comm timeout")
 )
 
 // update_rate feeds `1000 / update_rate` as a millisecond timer interval, so
@@ -51,7 +45,6 @@ inline std::vector<std::string> validate(SparklineConfig_t& cfg)
     config_codec::limits::orderRange(cfg.min_value, cfg.max_value, "the value range", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.font_size_value, 1u, 200u, "font_size_value", notes);
     config_codec::limits::clampInto<uint16_t>(cfg.font_size_units, 1u, 200u, "font_size_units", notes);
-    config_codec::limits::clampStaleAfter(cfg.stale_after_ms, "stale_after_ms", notes);
     return notes;
 }
 

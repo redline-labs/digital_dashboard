@@ -16,25 +16,32 @@ same recipe with more room.
 
 ## Bindings and loss of comm
 
-A widget that reads a topic carries two things per binding: the `zenoh_key` and
-expression it subscribes with, and a `stale_after_ms` field beside them. Build
-the subscription with the overload that takes the timeout:
+A widget that reads a topic declares one `pub_sub::subscription_t` field per
+binding (`pub_sub/subscription.h`), named for what it feeds. That struct is the
+key, schema, expression and `stale_after_ms` together; its own `validate()`
+clamps the timeout, so the widget's `validate()` does not mention it. Give the
+field the widget's own default schema with `subscriptionFor()`:
 
 ```cpp
-_expression_parser = dashboard::makeExpressionSubscription<double>(
-    _cfg.schema_type, _cfg.value_expression, _cfg.zenoh_key,
-    this, &MyWidget::setValue,
-    std::chrono::milliseconds(_cfg.stale_after_ms));
+(pub_sub::subscription_t, value, pub_sub::subscriptionFor(pub_sub::schema_type_t::EngineRpm),
+    "Value", "The reading shown: topic, schema, expression and loss-of-comm timeout"),
 ```
+
+and hand the whole struct to the subscription:
+
+```cpp
+_expression_parser =
+    dashboard::makeExpressionSubscription<double>(_cfg.value, this, &MyWidget::setValue);
+```
+
+An unbound field (empty key) gives `nullptr` and logs nothing.
 
 That is the whole wiring. The subscription repaints the widget when the answer
 changes; the widget asks it where it paints:
 
 ```cpp
-bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
+bool valueStale() const { return dashboard::isStale(_expression_parser); }
 ```
-
-`validate()` calls `config_codec::limits::clampStaleAfter()`.
 
 {: .warning }
 Draw something different. A widget that reads `isStale()` and paints the same

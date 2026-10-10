@@ -63,7 +63,7 @@ class SegmentReadoutWidget : public QWidget
     // Every cell shows a dash in the stale colour while the stream is quiet.
     // The subscription is the only place this is recorded, so there is
     // nothing here to keep in step with it.
-    bool valueStale() const { return _expression_parser && _expression_parser->isStale(); }
+    bool valueStale() const { return dashboard::isStale(_expression_parser); }
 };
 
 #endif // SEGMENT_READOUT_WIDGET_H
