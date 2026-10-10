@@ -1072,7 +1072,9 @@ std::optional<std::size_t> Canvas::addPage(SelectionFrame* stack, std::string na
         {
             return false;
         }
-        cfg->pages.push_back(widget_page_t{name, true, {}});
+        widget_page_t page;
+        page.name = name;
+        cfg->pages.push_back(std::move(page));
         state.page_names[*index].push_back({});
         added = cfg->pages.size() - 1;
         return true;

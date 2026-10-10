@@ -69,6 +69,79 @@ bool operator==(const T& lhs, const T& rhs)
                                              std::make_index_sequence<kFieldCount>{});
 }
 
+namespace config_codec
+{
+// Fields the YAML encoder leaves out while they hold their default.
+//
+// For a key added after files were written without it: every config saved
+// before windows had a display would otherwise gain `display: primary` the
+// first time the editor saved it, which is noise in every diff. Specialise
+// with the field names; the decode is unaffected, since an absent key keeps
+// its default anyway.
+//
+//     template <> struct yaml_omit_when_default<app_config_t>
+//     {
+//         static constexpr std::string_view fields[] = {"display", "scale"};
+//     };
+template <typename T>
+struct yaml_omit_when_default
+{
+    static constexpr std::string_view fields[] = {""};
+};
+
+namespace detail
+{
+template <typename T>
+constexpr bool omittedWhenDefault(std::string_view field)
+{
+    for (const std::string_view name : yaml_omit_when_default<T>::fields)
+    {
+        if (!name.empty() && name == field)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename T>
+constexpr bool hasOmissions()
+{
+    for (const std::string_view name : yaml_omit_when_default<T>::fields)
+    {
+        if (!name.empty())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename T, std::size_t... I>
+void encodeFields(YAML::Node& node, const T& rhs, std::index_sequence<I...>)
+{
+    [[maybe_unused]] static const T defaults{};
+    const auto fields = T::reflection_fields();
+    (
+        [&] {
+            const auto& field = std::get<I>(fields);
+            const auto& value = rhs.*(field.member_ptr);
+            // Only a struct that names omissions compares its fields, so the
+            // rest need no operator== on every field type.
+            if constexpr (hasOmissions<T>())
+            {
+                if (omittedWhenDefault<T>(field.name) && value == defaults.*(field.member_ptr))
+                {
+                    return;
+                }
+            }
+            node[std::string(field.name)] = value;
+        }(),
+        ...);
+}
+}  // namespace detail
+}  // namespace config_codec
+
 namespace YAML {
 
 // Every REFLECT_STRUCT and REFLECT_ENUM converts to and from YAML, without
@@ -96,10 +169,8 @@ struct convert<T>
     static Node encode(const T& rhs)
     {
         Node node = {};
-        reflection::visit_fields<T>(rhs, [&](std::string_view name, const auto& ref, std::string_view /*type*/)
-        {
-            node[name] = ref;
-        });
+        constexpr std::size_t kFieldCount = std::tuple_size_v<decltype(T::reflection_fields())>;
+        config_codec::detail::encodeFields(node, rhs, std::make_index_sequence<kFieldCount>{});
         return node;
     }
 

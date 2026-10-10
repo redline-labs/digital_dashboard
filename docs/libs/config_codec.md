@@ -33,7 +33,7 @@ would buy nothing.
 
 | Header | |
 | --- | --- |
-| `config_codec/config_yaml.h` | `YAML::convert<>` for every reflected struct and enum, and a generated `operator==` for every reflected struct. |
+| `config_codec/config_yaml.h` | `YAML::convert<>` for every reflected struct, enum and string leaf, a generated `operator==` for every reflected struct, and `yaml_omit_when_default<T>`: the fields the encoder leaves out while they hold their default. |
 | `config_codec/config_json.h` | `toJson`, `applyJson` (a partial patch with per-path errors) and `describeType` (fields, types, defaults, labels). |
 | `config_codec/config_validation.h` | `Issue` and `detail::validateStruct<T>`: walks a YAML node against a struct and reports unknown keys and unacceptable values by path. |
 | `config_codec/config_limits.h` | The `validate()` clamping contract and the helpers behind it: `clampInto`, `clampFullScale`, `orderRange`, `capLength`. |
@@ -103,6 +103,12 @@ everywhere below the top level and mean "use the default".
 template, comparing through the member pointers reflection already holds. That
 is what lets `std::variant` over widget configs compare for free, and what the
 editor uses to answer "did anything change" without serialising to YAML.
+
+A field added to a struct after files were written without it can be kept out
+of those files until it is set: specialise `yaml_omit_when_default<T>` with its
+name. That is how `app_config_t` leaves out `display` and `scale` and a page
+leaves out `in_cycle`, without a hand-written encoder that lists every field
+-- the hand-written ones silently dropped any field added after them.
 
 The `convert<>` specializations here are constrained partial specializations
 with the same argument list as yaml-cpp's primary template, which C++20 allows

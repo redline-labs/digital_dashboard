@@ -99,12 +99,12 @@ struct widget_config_t {
 };
 
 // One page of a page_stack. Its widgets are placed relative to the stack.
-struct widget_page_t {
-    std::string name;
+REFLECT_STRUCT(widget_page_t,
+    (std::string, name, ""),
     // Whether next/prev stop here. go_to and back reach every page regardless.
-    bool in_cycle{true};
-    std::vector<widget_config_t> widgets;
-};
+    (bool, in_cycle, true),
+    (std::vector<widget_config_t>, widgets, {})
+)
 
 // The pages a new widget of `type` starts with: one empty page for a page_stack,
 // so one dropped from the editor's palette saves as a config that loads.
@@ -112,7 +112,9 @@ inline std::vector<widget_page_t> default_widget_pages(widget_type_t type)
 {
     if (type == widget_type_t::page_stack)
     {
-        return {widget_page_t{"main", true, {}}};
+        widget_page_t main;
+        main.name = "main";
+        return {main};
     }
     return {};
 }
@@ -131,6 +133,21 @@ REFLECT_STRUCT(app_config_t,
     (scale_mode_t, scale, scale_mode_t::fit),
     (std::vector<widget_config_t>, widgets, {})
 )
+
+// Written only when they say something: every config saved before windows had
+// a display would otherwise gain `display: primary` and `scale: fit`.
+template <>
+struct config_codec::yaml_omit_when_default<app_config_t>
+{
+    static constexpr std::string_view fields[] = {"display", "scale"};
+};
+
+// Most pages are in the cycle.
+template <>
+struct config_codec::yaml_omit_when_default<widget_page_t>
+{
+    static constexpr std::string_view fields[] = {"in_cycle"};
+};
 
 // A whole config file: one or more windows.
 //
@@ -151,8 +168,6 @@ struct dashboard_config_t
 // The generic half of this -- operator== and the YAML conversions for every
 // reflected struct and enum -- lives in config_codec/config_yaml.h. Only the
 // widget-specific pieces are below.
-inline bool operator==(const widget_page_t& lhs, const widget_page_t& rhs);
-
 inline bool operator==(const widget_config_t& lhs, const widget_config_t& rhs)
 {
     return lhs.type() == rhs.type() && lhs.id == rhs.id && lhs.x == rhs.x && lhs.y == rhs.y &&
@@ -160,10 +175,6 @@ inline bool operator==(const widget_config_t& lhs, const widget_config_t& rhs)
            lhs.pages == rhs.pages;
 }
 
-inline bool operator==(const widget_page_t& lhs, const widget_page_t& rhs)
-{
-    return lhs.name == rhs.name && lhs.in_cycle == rhs.in_cycle && lhs.widgets == rhs.widgets;
-}
 
 
 // Convert from a YAML Node to a native config_t.
@@ -256,69 +267,7 @@ struct convert<widget_config_t> {
     }
 };
 
-template<>
-struct convert<widget_page_t> {
-    static Node encode(const widget_page_t& rhs)
-    {
-        Node node = {};
-        node["name"] = rhs.name;
-        // Written only when it says something: most pages are in the cycle.
-        if (!rhs.in_cycle)
-        {
-            node["in_cycle"] = false;
-        }
-        node["widgets"] = rhs.widgets;
-        return node;
-    }
 
-    static bool decode(const Node& node, widget_page_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-        if (node["name"]) rhs.name = node["name"].as<std::string>();
-        if (node["in_cycle"]) rhs.in_cycle = node["in_cycle"].as<bool>();
-        if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
-        return true;
-    }
-};
-
-// Hand-written rather than the generic reflected conversion for one reason: the
-// placement keys are omitted while they hold their defaults. Every config written
-// before windows had a display would otherwise gain `display: primary` and
-// `scale: fit` the first time the editor saved it.
-template<>
-struct convert<app_config_t> {
-    static Node encode(const app_config_t& rhs)
-    {
-        Node node = {};
-        node["name"] = rhs.name;
-        node["width"] = rhs.width;
-        node["height"] = rhs.height;
-        node["background_color"] = rhs.background_color;
-        if (rhs.display != display_role_t::primary)
-        {
-            node["display"] = rhs.display;
-        }
-        if (rhs.scale != scale_mode_t::fit)
-        {
-            node["scale"] = rhs.scale;
-        }
-        node["widgets"] = rhs.widgets;
-        return node;
-    }
-
-    static bool decode(const Node& node, app_config_t& rhs)
-    {
-        if (!node.IsMap()) return false;
-        if (node["name"]) rhs.name = node["name"].as<std::string>();
-        if (node["width"]) rhs.width = node["width"].as<uint16_t>();
-        if (node["height"]) rhs.height = node["height"].as<uint16_t>();
-        if (node["background_color"]) rhs.background_color = node["background_color"].as<helpers::Color>();
-        if (node["display"]) rhs.display = node["display"].as<display_role_t>();
-        if (node["scale"]) rhs.scale = node["scale"].as<scale_mode_t>();
-        if (node["widgets"]) rhs.widgets = node["widgets"].as<std::vector<widget_config_t>>();
-        return true;
-    }
-};
 
 template<>
 struct convert<dashboard_config_t> {

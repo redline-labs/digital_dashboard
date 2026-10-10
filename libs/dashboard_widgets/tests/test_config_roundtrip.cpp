@@ -485,6 +485,35 @@ void testANewStackStartsWithAPage()
 
 }  // namespace
 
+// Every field of a window and a page reaches the YAML, except the ones named in
+// yaml_omit_when_default while they hold their default. The hand-written
+// encoders this replaced listed the fields themselves, so a field added to the
+// struct reached JSON and the editor and was silently dropped from the file.
+void testEveryFieldIsWrittenUnlessItIsAnOmittedDefault()
+{
+    const app_config_t window;
+    const YAML::Node written = YAML::convert<app_config_t>::encode(window);
+    reflection::visit_fields(window, [&](std::string_view name, const auto&, std::string_view) {
+        const bool omitted = name == "display" || name == "scale";
+        check(static_cast<bool>(written[std::string(name)]) != omitted,
+              std::string("window field '") + std::string(name) +
+                  (omitted ? "' is left out at its default" : "' is written"));
+    });
+
+    app_config_t placed;
+    placed.display = display_role_t::secondary;
+    placed.scale = scale_mode_t::none;
+    const YAML::Node placed_yaml = YAML::convert<app_config_t>::encode(placed);
+    check(placed_yaml["display"] && placed_yaml["scale"], "and written once it is not the default");
+
+    widget_page_t page;
+    page.name = "p";
+    check(!YAML::convert<widget_page_t>::encode(page)["in_cycle"], "a page in the cycle omits in_cycle");
+    page.in_cycle = false;
+    check(YAML::convert<widget_page_t>::encode(page)["in_cycle"].as<bool>() == false,
+          "a page out of the cycle says so");
+}
+
 int main()
 {
     testFlatFormLoadsAsOneWindow();
@@ -500,6 +529,7 @@ int main()
     testPagesSurviveARoundTrip();
     testPagesAreOnlyWrittenWhereTheyMeanSomething();
     testANewStackStartsWithAPage();
+    testEveryFieldIsWrittenUnlessItIsAnOmittedDefault();
 
     std::fprintf(stderr, "%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
