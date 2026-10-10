@@ -111,29 +111,6 @@ class ByteSubscriber
     std::unique_ptr<Impl> impl_;
 };
 
-// True when a sample may be decoded as `schema_name`: either the publisher
-// stamped no fingerprint (an older build, or something that is not ours), or it
-// stamped `expected`, this build's fingerprint for that schema.
-//
-// `expected` is passed in rather than looked up here because the caller knows
-// the schema as a TYPE and so has it as a constant --
-// `schema_traits<SchemaT>::layout`. This runs on every sample of every
-// subscription, and looking a name up per sample is the cost that constant
-// exists to avoid. kNoLayout means this build does not know the schema, which
-// is not a mismatch.
-//
-// A mismatch is reported once per key -- a stream at 100 Hz would otherwise
-// fill the log with the same line -- and the sample is dropped by the caller.
-bool layoutMatches(std::string_view keyexpr, std::string_view schema_name,
-                   std::uint64_t expected, std::optional<std::uint64_t> published);
-
-// Logs "payload is not a whole number of capnp words" for `keyexpr`.
-//
-// A free function purely so the templated subscribers that need it do not have to
-// include spdlog -- which is the same reasoning as the rest of this header, and
-// worth 16,000 preprocessed lines per translation unit.
-void warnPartialWordPayload(std::string_view keyexpr, std::size_t bytes);
-
 }  // namespace pub_sub::detail
 
 #endif  // PUB_SUB_DETAIL_BYTE_SUBSCRIBER_H_

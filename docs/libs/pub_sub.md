@@ -92,9 +92,12 @@ fires on the first subscriber arriving and the last leaving, not in between.
 {: .warning }
 Decoding against the wrong schema is silent: field offsets land on different
 bytes and produce a plausible number, not an exception. Publishers stamp
-`application/capnp;<Schema>` on every sample and subscribers check it.
-`ExpressionEvaluator::checkPublishedSchema()` takes the whole encoding string,
-not the schema half, and complains once.
+`application/capnp;<Schema>` and a layout revision on every sample, and every
+subscriber judges both through one `pub_sub::SampleGate` (`sample_check.h`):
+another schema or revision is dropped and said once; a sample that names no
+schema is decoded as expected. It takes the bare name, as `RawSubscriber`
+gives it. `typed_decode.h` adds the decode step for a schema known as a type,
+catching what capnp throws while the reader is followed.
 
 A payload that is not a whole number of 8-byte words is refused, because capnp
 reads a short buffer as a message whose fields are all default. `evaluate<T>()`

@@ -160,17 +160,6 @@ struct RecordedBinding
     SignalKey key;
     std::shared_ptr<SignalBuffer> buffer;
 
-    // The registry name this binding will accept, resolved once at bind time.
-    //
-    // NOT ExpressionEvaluator::checkPublishedSchema(). That takes a whole
-    // encoding string ("application/capnp;EngineRpm") so it can tell "published
-    // as something else" apart from "published with no schema named" -- and
-    // BagMessage::schema is the bare registry name. Passed through, it would
-    // match neither branch and check nothing at all, silently, which is the one
-    // outcome worse than not checking: capnp decodes against whatever schema it
-    // is handed and yields a plausible wrong number rather than an error.
-    std::string expected_schema;
-
     // exprtk binds field slots into its symbol table BY ADDRESS, so this is
     // non-movable and has to be held indirectly.
     std::unique_ptr<pub_sub::ExpressionEvaluator> evaluator;
@@ -398,11 +387,11 @@ struct RecordedSource::Impl
                         RecordedBinding& binding = *signal_work[i].binding;
 
                         // Recorded with a different schema than the binding
-                        // expects. Skipped rather than decoded: capnp will
-                        // happily read these bytes against the wrong schema
-                        // and produce a number.
-                        if (!message.schema.empty() &&
-                            message.schema != binding.expected_schema)
+                        // expects. Skipped, and said once, rather than decoded:
+                        // capnp will happily read these bytes against the wrong
+                        // schema and produce a number. The recording keeps no
+                        // per-message revision; bag checks that per channel.
+                        if (!binding.evaluator->admitsPublisher(message.schema, std::nullopt))
                         {
                             continue;
                         }
@@ -1010,8 +999,6 @@ SignalHandle RecordedSource::bind(const SignalKey& key, std::shared_ptr<SignalBu
     binding->key = key;
     binding->buffer = std::move(into);
     binding->evaluator = std::move(evaluator);
-    binding->expected_schema =
-        std::string(reflection::enum_traits<pub_sub::schema_type_t>::to_string(key.schema_type));
 
     {
         const std::lock_guard<std::mutex> guard(impl_->mutex);

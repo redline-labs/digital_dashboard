@@ -1,7 +1,6 @@
 #ifndef DASHBOARD_TYPED_SUBSCRIPTION_H_
 #define DASHBOARD_TYPED_SUBSCRIPTION_H_
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -14,15 +13,10 @@
 
 #include <QPointer>
 
-#include <capnp/serialize.h>
-#include <spdlog/spdlog.h>
-
 #include "dashboard/delivery_ticker.h"
 #include "dashboard/staleness.h"
-#include "pub_sub/capnp_payload.h"
-#include "pub_sub/detail/byte_subscriber.h"
 #include "pub_sub/raw_subscriber.h"
-#include "pub_sub/schema_registry.h"
+#include "pub_sub/typed_decode.h"
 
 namespace dashboard
 {
@@ -44,9 +38,8 @@ namespace dashboard
 // which is how album art is decoded once per track rather than per message.
 // Returning nullopt drops the message.
 //
-// Checks the schema NAME the publisher stamped, not only its layout revision:
-// a layout check passes an unstamped sample, and a message of another schema
-// decodes silently into plausible wrong values.
+// Every sample passes pub_sub::SampleGate first -- schema name and revision --
+// and a malformed one is dropped rather than taking the widget down.
 //
 // Not copyable or movable: the subscriber's callback captures `this`.
 template <typename SchemaT, typename Value>
@@ -66,7 +59,7 @@ class TypedSubscription final : public DeliveryTarget
         , staleness_{staleness::suppressed() ? std::chrono::milliseconds{0} : stale_after,
                      std::chrono::steady_clock::now()}
         , ticker_{DeliveryTicker::instance()}
-        , key_{zenoh_key}
+        , gate_{zenoh_key}
     {
         DeliveryTicker* const ticker = ticker_.data();
         subscriber_ = std::make_unique<pub_sub::RawSubscriber>(
@@ -138,38 +131,12 @@ class TypedSubscription final : public DeliveryTarget
     std::optional<Value> decode(const std::vector<std::uint8_t>& bytes,
                                 const pub_sub::RawSubscriber::SampleInfo& info)
     {
-        if (info.schema_name != pub_sub::schema_traits<SchemaT>::name)
+        std::optional<Value> value;
+        if (gate_.admit(info.schema_name, info.layout))
         {
-            return std::nullopt;
+            pub_sub::decodeAs<SchemaT>(gate_, bytes, [&](Reader reader) { value = extract_(reader); });
         }
-        if (!pub_sub::detail::layoutMatches(key_, pub_sub::schema_traits<SchemaT>::name,
-                                            pub_sub::schema_traits<SchemaT>::layout, info.layout))
-        {
-            return std::nullopt;
-        }
-        const pub_sub::WordAlignedPayload aligned(
-            reinterpret_cast<const kj::byte*>(bytes.data()), bytes.size());
-        if (aligned.empty())
-        {
-            pub_sub::detail::warnPartialWordPayload(key_, bytes.size());
-            return std::nullopt;
-        }
-        try
-        {
-            capnp::FlatArrayMessageReader reader(aligned.words());
-            return extract_(reader.getRoot<SchemaT>());
-        }
-        catch (const kj::Exception& e)
-        {
-            // A malformed message is dropped; one bad sample must not take the
-            // widget down. Said once per subscription, not once per sample.
-            if (!warned_malformed_.exchange(true))
-            {
-                SPDLOG_WARN("'{}': dropping a malformed {} message: {}", key_,
-                            pub_sub::schema_traits<SchemaT>::name, e.getDescription().cStr());
-            }
-            return std::nullopt;
-        }
+        return value;
     }
 
     std::function<std::optional<Value>(Reader)> extract_;
@@ -177,8 +144,7 @@ class TypedSubscription final : public DeliveryTarget
     std::function<void()> on_stale_edge_;
     StalenessTracker staleness_;
     QPointer<DeliveryTicker> ticker_;
-    std::string key_;
-    std::atomic<bool> warned_malformed_{false};
+    pub_sub::TypedGate<SchemaT> gate_;
 
     std::mutex mutex_;
     std::optional<Value> pending_;

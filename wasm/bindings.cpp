@@ -5,7 +5,7 @@
 // target -- that is the entire point. A browser that reimplemented the
 // fingerprint in TypeScript would not fail loudly when it got a slot offset
 // wrong; it would silently drop every sample of the affected schema, because
-// pub_sub::detail::layoutMatches() drops mismatches rather than throwing.
+// pub_sub::SampleGate drops mismatches rather than throwing.
 //
 // u64 CROSSES AS HEX, NOT AS A NUMBER. A JS number is a double, so it carries 53
 // bits exactly and a layout hash is 64. Returning one as a number would compare

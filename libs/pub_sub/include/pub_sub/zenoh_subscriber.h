@@ -12,14 +12,14 @@
 // not pay for the other one. They reach it through
 // dashboard/expression_subscription.h, which includes the lean header directly.
 
-#include <capnp/serialize.h>
-
-#include "pub_sub/capnp_payload.h"
+#include "pub_sub/capnp_encoding.h"
 #include "pub_sub/detail/byte_subscriber.h"
 #include "pub_sub/expression_subscriber.h"
+#include "pub_sub/typed_decode.h"
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -37,7 +37,9 @@ namespace pub_sub
 // what you need.
 //
 // The callback runs on a zenoh RX thread. It may throw; the exception is caught
-// and logged rather than crossing back into zenoh.
+// and logged rather than crossing back into zenoh. A sample of another schema or
+// revision, or one capnp cannot read, is dropped and said once -- see
+// SampleGate.
 //
 // zenoh is not in this header -- see detail::ByteSubscriber. capnp is, because
 // SchemaT is the contract callers write against.
@@ -48,32 +50,23 @@ class ZenohTypedSubscriber
     using Reader = typename SchemaT::Reader;
 
     ZenohTypedSubscriber(const std::string& zenoh_key, std::function<void(Reader)> on_message) :
+        gate_(zenoh_key),
         subscriber_(zenoh_key,
-                    [cb = std::move(on_message), key = zenoh_key](
-                        const std::vector<std::uint8_t>& bytes, const detail::SampleMeta& meta) {
-                        // A partial word cannot be a message. capnp would read the
-                        // short buffer as one whose fields are all default, so a
-                        // damaged packet would look like a healthy one reporting
-                        // zero; refuse it instead.
-                        const WordAlignedPayload aligned(bytes);
-                        if (aligned.empty())
+                    [this, cb = std::move(on_message)](const std::vector<std::uint8_t>& bytes,
+                                                       const detail::SampleMeta& meta) {
+                        // The name is judged on the first sample only: encoding()
+                        // copies a string out of zenoh, and a key does not change
+                        // schema mid-stream.
+                        if (!name_ok_)
                         {
-                            detail::warnPartialWordPayload(key, bytes.size());
-                            return;
+                            name_ok_ = gate_.admit(schemaNameFromEncoding(meta.encoding()),
+                                                   std::nullopt);
                         }
-
-                        // Written against a different revision of this schema:
-                        // the name matches, the bytes do not mean the same
-                        // thing, and capnp would decode them into plausible
-                        // wrong numbers. Dropped, and said once per key.
-                        if (!detail::layoutMatches(key, schema_traits<SchemaT>::name,
-                                                   schema_traits<SchemaT>::layout, meta.layout()))
+                        if (!*name_ok_ || !gate_.admitRevision(meta.layout()))
                         {
                             return;
                         }
-
-                        capnp::FlatArrayMessageReader reader(aligned.words());
-                        cb(reader.getRoot<SchemaT>());
+                        decodeAs<SchemaT>(gate_, bytes, cb);
                     })
     {
     }
@@ -83,6 +76,10 @@ class ZenohTypedSubscriber
     std::string_view keyexpr() const { return subscriber_.keyexpr(); }
 
   private:
+    TypedGate<SchemaT> gate_;
+    // Written and read only on the RX thread, which ByteSubscriber serialises.
+    std::optional<bool> name_ok_;
+    // Last: undeclaring joins the callback, which uses everything above.
     detail::ByteSubscriber subscriber_;
 };
 

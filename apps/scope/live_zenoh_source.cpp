@@ -305,7 +305,8 @@ KeySubscription* LiveZenohSource::Impl::ensureSubscription(const std::string& ke
 
         subscription->subscriber = std::make_unique<pub_sub::RawSubscriber>(
             key,
-            [raw, t0_copy](const std::vector<std::uint8_t>& payload, std::string_view schema_name) {
+            [raw, t0_copy](const std::vector<std::uint8_t>& payload, std::string_view schema_name,
+                           std::optional<std::uint64_t> layout) {
                 // One decode per bound signal rather than one per subscription,
                 // because each expression may read different fields. Still one
                 // *subscription* per key, which is the win: the wire traffic
@@ -360,12 +361,14 @@ KeySubscription* LiveZenohSource::Impl::ensureSubscription(const std::string& ke
 
                 for (const std::shared_ptr<Binding>& binding : *bindings)
                 {
-                    // Latched inside the evaluator: one encoding comparison on
-                    // the first sample, a predicted branch thereafter. Worth it
-                    // because decoding against the wrong schema is silent --
-                    // field offsets land on different bytes and you get a
-                    // plausible number, not an error.
-                    binding->evaluator->checkPublishedSchema(schema_name);
+                    // Latched inside the evaluator: judged on the first sample,
+                    // a predicted branch thereafter. Worth it because decoding
+                    // against the wrong schema is silent -- field offsets land
+                    // on different bytes and you get a plausible number.
+                    if (!binding->evaluator->admitsPublisher(schema_name, layout))
+                    {
+                        continue;
+                    }
 
                     // nullopt means this sample was unusable. Dropping it
                     // leaves a gap in the line, which is honest; substituting

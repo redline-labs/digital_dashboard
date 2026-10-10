@@ -32,13 +32,16 @@ class RawSubscriber
     // `schema_name` is the half after the ';' of "application/capnp;EngineRpm",
     // and is empty when the publisher named no schema. It is a view over a
     // string owned for the duration of the call only -- copy it to keep it.
+    // `layout` is the publisher's schema revision, when it stamped one; the two
+    // together are what a pub_sub::SampleGate judges.
     //
     // Runs on a zenoh RX thread. Must not block and must not throw: the frame
     // above is Rust, and an exception crossing that boundary aborts the process.
     // RawSubscriber catches anything that escapes anyway, because "must not" is
     // not "cannot".
     using Handler = std::function<void(const std::vector<std::uint8_t>& payload,
-                                       std::string_view schema_name)>;
+                                       std::string_view schema_name,
+                                       std::optional<std::uint64_t> layout)>;
 
     // Everything about a sample except its bytes, resolved eagerly.
     //

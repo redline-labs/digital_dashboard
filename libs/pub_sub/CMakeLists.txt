@@ -27,6 +27,10 @@ add_library(zenoh_pub_sub STATIC
     # that decodes them itself.
     raw_subscriber.cpp
 
+    # The checks every typed consumer runs before trusting a payload -- schema
+    # name, revision, whole words, a clean decode -- in one place.
+    sample_check.cpp
+
     # One liveliness token per process, mapping this session's zid to a name a
     # person recognises. The other half of the zid an advertisement carries, and
     # the only way a process that subscribes but never publishes is visible at
@@ -124,6 +128,17 @@ target_link_libraries(pub_sub_test_can_frame PRIVATE
     zenoh_pub_sub
 )
 add_project_test(TARGET pub_sub_test_can_frame LABELS pub_sub unit)
+
+# The verdict on a sample from what its publisher stamped: name, then revision.
+# Mostly static_asserts, so a wrong rule fails the build.
+add_executable(pub_sub_test_sample_check
+    test_sample_check.cpp
+)
+
+target_link_libraries(pub_sub_test_sample_check PRIVATE
+    zenoh_pub_sub
+)
+add_project_test(TARGET pub_sub_test_sample_check LABELS pub_sub unit)
 
 # The schema fingerprint, against the registry compiled into this build: stable,
 # distinct per schema, and the same whether computed from the schema or from a
@@ -232,6 +247,12 @@ add_project_test(TARGET pub_sub_test_publisher_reuse LABELS pub_sub net)
 add_executable(pub_sub_test_subscriber_dispatch test_subscriber_dispatch.cpp)
 target_link_libraries(pub_sub_test_subscriber_dispatch PRIVATE zenoh_pub_sub spdlog::spdlog)
 add_project_test(TARGET pub_sub_test_subscriber_dispatch LABELS pub_sub net)
+
+# What ZenohTypedSubscriber refuses: another schema, another revision, a payload
+# capnp cannot read. Over a real session, each with the publisher that stamps it.
+add_executable(pub_sub_test_typed_subscriber test_typed_subscriber.cpp)
+target_link_libraries(pub_sub_test_typed_subscriber PRIVATE zenoh_pub_sub spdlog::spdlog)
+add_project_test(TARGET pub_sub_test_typed_subscriber LABELS pub_sub net)
 
 # Topic key validation and mangling. Pure logic, so `unit`. The round trip over
 # every key in configs/ is the part that would catch a real regression: it

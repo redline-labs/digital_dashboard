@@ -43,7 +43,7 @@ RawSubscriber::RawSubscriber(const std::string& keyexpr, Handler on_sample) :
             // class. The view handed to the handler is over this local, which
             // is why the contract says copy it to keep it.
             const std::string encoding = meta.encoding();
-            impl->handler(payload, schemaNameFromEncoding(encoding));
+            impl->handler(payload, schemaNameFromEncoding(encoding), meta.layout());
         });
 
     // Unlike the expression subscriber there is no startup race to guard here:

@@ -20,7 +20,6 @@
 // The same equivalence is what layoutHashOfDescriptor() depends on.
 #include "pub_sub/schema_layout.h"
 
-#include "pub_sub/detail/byte_subscriber.h"
 #include "pub_sub/schema_registry.h"
 
 #include "engine_rpm.capnp.h"
@@ -133,19 +132,7 @@ int main()
                                            "NoSuchSchema") == std::nullopt,
            "and neither does a name this build does not know");
 
-    // The decision the fingerprint exists to make. layoutMatches() takes the
-    // expected value as an argument -- the typed subscriber passes
-    // schema_traits<T>::layout, a constant -- so what happens on a mismatch can
-    // be checked here without a bus.
-    const std::uint64_t engine_rpm = pub_sub::schema_traits<::EngineRpm>::layout;
-    expect(pub_sub::detail::layoutMatches("a/key", "EngineRpm", engine_rpm, engine_rpm),
-           "a sample stamped with this build's fingerprint is decoded");
-    expect(!pub_sub::detail::layoutMatches("a/key", "EngineRpm", engine_rpm, engine_rpm + 1),
-           "a sample stamped with another revision's is dropped");
-    expect(pub_sub::detail::layoutMatches("a/key", "EngineRpm", engine_rpm, std::nullopt),
-           "an unstamped sample is decoded, so a publisher predating this keeps working");
-    expect(pub_sub::detail::layoutMatches("a/key", "Whatever", pub_sub::kNoLayout, engine_rpm),
-           "a schema this build does not know is not a mismatch");
+    // What a subscriber does with a mismatch is pinned in test_sample_check.cpp.
 
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

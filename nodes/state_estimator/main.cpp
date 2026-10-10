@@ -277,7 +277,8 @@ int main(int argc, char** argv)
     Inbox inbox;
     const auto subscribe = [&](const std::string& prefix, node_health::ActivityCheck& seen) {
         return std::make_unique<pub_sub::RawSubscriber>(
-            prefix + "/**", [&inbox, &seen](const std::vector<std::uint8_t>& payload, std::string_view schema) {
+            prefix + "/**", [&inbox, &seen](const std::vector<std::uint8_t>& payload, std::string_view schema,
+                                          std::optional<std::uint64_t> /*layout*/) {
                 seen.touch();
                 inbox.push(Queued{std::string(schema), payload, hostNow()});
             });

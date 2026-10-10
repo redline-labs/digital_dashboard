@@ -1,5 +1,6 @@
 #include "pub_sub/expression_evaluator.h"
 
+#include "pub_sub/sample_check.h"
 #include "pub_sub/schema_layout.h"
 
 #include "helpers/unit_conversion.h"
@@ -210,9 +211,10 @@ struct ExpressionEvaluator::Impl
 
     // schema_type comes from config -- it is what this consumer *expects* on this
     // key, not what is actually being published there. The publisher stamps the
-    // truth on every sample, so check the two agree. Latched so a mismatch is
-    // reported once rather than at the sample rate.
-    bool schema_checked = false;
+    // truth on every sample; the gate compares the two, and the verdict is kept
+    // from the first sample on.
+    std::unique_ptr<SampleGate> gate;
+    std::optional<bool> publisher_ok;
 
     // Latches for the other once-per-binding complaints. A malformed publisher
     // produces bad samples at the sample rate, and an unlatched warning at
@@ -426,6 +428,9 @@ ExpressionEvaluator::ExpressionEvaluator(schema_type_t schema_type,
     impl_->schema_type = schema_type;
     impl_->expression = expression;
     impl_->log_context = log_context.empty() ? expression : std::move(log_context);
+    impl_->gate = std::make_unique<SampleGate>(
+        impl_->log_context, reflection::enum_traits<schema_type_t>::to_string(schema_type),
+        schema_layout_hash(schema_type));
 
     // Assume valid until proven otherwise.
     impl_->is_valid = true;
@@ -524,73 +529,19 @@ const std::vector<std::string>& ExpressionEvaluator::variableNames() const
     return impl_->variable_names;
 }
 
-void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding,
-                                              std::optional<std::uint64_t> layout)
+bool ExpressionEvaluator::admitsPublisher(std::string_view published_name,
+                                          std::optional<std::uint64_t> layout)
 {
-    const bool first = !impl_->schema_checked;
-    checkPublishedSchema(encoding);
-
-    if (!first || !layout)
+    if (!impl_->publisher_ok)
     {
-        return;
+        impl_->publisher_ok = impl_->gate->admit(published_name, layout);
     }
-
-    const std::string_view configured =
-        reflection::enum_traits<pub_sub::schema_type_t>::to_string(impl_->schema_type);
-    // The schema is held as an enum here, so the generated table answers
-    // directly rather than through a name.
-    const std::uint64_t expected = schema_layout_hash(impl_->schema_type);
-    if (expected == kNoLayout || expected == *layout)
-    {
-        return;
-    }
-
-    SPDLOG_ERROR("Key '{}' publishes '{}' written against a different revision of that schema "
-                 "(publisher {:016x}, this build {:016x}). Every value read from it will be "
-                 "wrong; rebuild both sides from the same schemas.",
-                 impl_->log_context, configured, *layout, expected);
+    return *impl_->publisher_ok;
 }
 
-bool ExpressionEvaluator::publishedSchemaChecked() const
+std::optional<bool> ExpressionEvaluator::publisherVerdict() const
 {
-    return impl_->schema_checked;
-}
-
-void ExpressionEvaluator::checkPublishedSchema(std::string_view encoding)
-{
-    if (impl_->schema_checked)
-    {
-        return;
-    }
-    impl_->schema_checked = true;
-
-    const std::string_view published = schemaNameFromEncoding(encoding);
-    const std::string_view configured =
-        reflection::enum_traits<pub_sub::schema_type_t>::to_string(impl_->schema_type);
-
-    if (published == configured)
-    {
-        return;
-    }
-
-    // An empty schema half means the publisher set a MIME type but no schema
-    // (or is not one of ours at all). Not necessarily wrong, so say less.
-    if (published.empty() || published == encoding)
-    {
-        SPDLOG_DEBUG("Key '{}' carries encoding '{}', which names no schema; "
-                     "decoding as the configured '{}'",
-                     impl_->log_context, encoding, configured);
-        return;
-    }
-
-    // capnp will decode the payload against whatever schema it is handed --
-    // field offsets simply land on different bytes -- so a wrong schema in
-    // config produces a plausible but meaningless number rather than an error.
-    // This is the only place that mismatch is detectable.
-    SPDLOG_ERROR("Key '{}' is published as '{}' but is configured as '{}'. The value will be "
-                 "decoded against the configured schema and will be wrong; fix schema_type in "
-                 "the config.",
-                 impl_->log_context, published, configured);
+    return impl_->publisher_ok;
 }
 
 std::optional<double> ExpressionEvaluator::evaluateToDouble(

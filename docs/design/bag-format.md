@@ -157,11 +157,9 @@ once, on a background thread, into a flat sample vector, and scrubbing is a
 slice out of that. Driving `forEach` from a slider would re-open files thirty
 times a second and re-scan a torn recording every one of them.
 
-**`BagMessage::schema` is the registry name**, not an encoding string, so it
-does not go to `ExpressionEvaluator::checkPublishedSchema()`. That takes
-`application/capnp;EngineRpm` and would match neither of its branches, silently
-checking nothing. Compare it against `enum_traits<schema_type_t>::to_string()`
-instead.
+**`BagMessage::schema` is the registry name**, not an encoding string: the
+same bare name `RawSubscriber` hands over, and what
+`ExpressionEvaluator::admitsPublisher()` and `pub_sub::SampleGate` judge.
 
 ## Why libs/bag is a library
 

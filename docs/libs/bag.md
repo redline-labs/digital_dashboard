@@ -87,9 +87,8 @@ message that was queued before the stop.
 `BagMessage` fields are views into buffers the reader owns and are valid only
 inside the callback; the payload points into a decompressed chunk the next
 message may replace. Copy anything you keep. `BagMessage::schema` is the
-registry name (`EngineRpm`), not an encoding string, so it must not go to
-`ExpressionEvaluator::checkPublishedSchema()`, which would match neither of its
-branches and check nothing.
+registry name (`EngineRpm`), not an encoding string, which is the form
+`pub_sub::SampleGate` judges.
 
 `publish_time_ns` equals `log_time_ns` when a sample arrived unstamped, and
 `unstamped_messages` in the index says how often that happened; a bag where it

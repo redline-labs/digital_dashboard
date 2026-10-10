@@ -453,11 +453,9 @@ mislabel the axis, it would violate `lowerBound()`'s precondition outright.
 A message recorded under a different schema than the binding expects is
 skipped, not decoded. capnp reads whatever bytes it is handed against whatever
 schema it is given, field offsets land elsewhere, so the result would be a
-plausible wrong number rather than an error.
-`ExpressionEvaluator::checkPublishedSchema()` is deliberately not used here:
-it takes a full encoding string (`application/capnp;EngineRpm`) and
-`BagMessage::schema` is the bare registry name, so passing it through would
-silently check nothing.
+plausible wrong number rather than an error. The numeric path asks
+`ExpressionEvaluator::admitsPublisher()`, the same check the live source makes,
+so a mismatch is logged once in both.
 
 ## Drawing
 

@@ -200,6 +200,18 @@ target_link_libraries(scope_test_ring PRIVATE
 
 add_project_test(TARGET scope_test_ring LABELS scope unit)
 
+# The live source against a real bus: a stream published as another schema is
+# dropped, not decoded into plausible numbers.
+add_executable(scope_test_live_source
+    tests/test_live_source.cpp
+)
+
+target_link_libraries(scope_test_live_source PRIVATE
+    scope_core
+)
+
+add_project_test(TARGET scope_test_live_source LABELS scope net)
+
 # The raw-payload buffer, which is the same two-bound argument CaptureBuffer
 # makes applied one layer up -- plus the backwards-seek case, where a buffer that
 # kept the position it came from stays perfectly ordered and is completely wrong.

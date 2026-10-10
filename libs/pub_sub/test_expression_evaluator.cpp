@@ -683,50 +683,45 @@ void testSchemaAndExpressionAreReportedBack()
     expect(eval.getExpression() == "rpm / 2", "the expression is reported back verbatim");
 }
 
-void testCheckPublishedSchemaToleratesAnything()
+// The verdict on a key's publisher: the bare name, as RawSubscriber and a
+// recording hand it over. Passing the whole encoding string here is how scope's
+// live source once let a mismatch through at debug level, so the bare name is
+// the one that has to be refused.
+void testAdmitsPublisherJudgesTheBareName()
 {
-    // The mismatch is only reportable, never fatal: decoding against the wrong
-    // schema still yields a number, and a wrong reading with a loud log line
-    // beats a blank one. What matters here is that none of these throw, since
-    // this runs from a zenoh callback.
-    auto eval = evaluatorFor("rpm");
+    auto same = evaluatorFor("rpm");
+    expect(!same.publisherVerdict(), "a fresh evaluator has no verdict");
+    expect(same.admitsPublisher("EngineRpm", std::nullopt), "the configured schema is admitted");
 
-    bool threw = false;
-    try
-    {
-        eval.checkPublishedSchema("application/capnp;EngineRpm");   // Matching.
-        eval.checkPublishedSchema("application/capnp;VehicleSpeed");  // Latched, so ignored.
+    auto other = evaluatorFor("rpm");
+    expect(!other.admitsPublisher("VehicleSpeed", std::nullopt),
+           "another schema's samples are refused");
 
-        auto other = evaluatorFor("rpm");
-        other.checkPublishedSchema("application/capnp;VehicleSpeed");  // Mismatch.
+    auto unnamed = evaluatorFor("rpm");
+    expect(unnamed.admitsPublisher("", std::nullopt),
+           "a publisher that named no schema is decoded as configured");
 
-        auto no_schema = evaluatorFor("rpm");
-        no_schema.checkPublishedSchema("application/capnp");  // MIME only.
+    auto foreign = evaluatorFor("rpm");
+    expect(!foreign.admitsPublisher("zenoh/bytes", std::nullopt),
+           "an encoding that is not ours is refused");
 
-        auto empty = evaluatorFor("rpm");
-        empty.checkPublishedSchema("");  // Nothing at all.
-    }
-    catch (...)
-    {
-        threw = true;
-    }
-    expect(!threw, "the schema check never throws, whatever encoding it is handed");
+    auto stale = evaluatorFor("rpm");
+    const std::uint64_t layout = pub_sub::schema_layout_hash(pub_sub::schema_type_t::EngineRpm);
+    expect(!stale.admitsPublisher("EngineRpm", layout + 1),
+           "another revision of the same schema is refused");
+    auto current = evaluatorFor("rpm");
+    expect(current.admitsPublisher("EngineRpm", layout), "this build's revision is admitted");
 }
 
-// The subscriber skips building the check's arguments once this is true, so
-// it must flip on the first check through either overload and stay flipped.
-void testPublishedSchemaCheckedLatches()
+// The subscriber skips building the arguments once there is a verdict, so the
+// first one has to stick, refusal included.
+void testPublisherVerdictLatches()
 {
     auto eval = evaluatorFor("rpm");
-    expect(!eval.publishedSchemaChecked(), "a fresh evaluator has not checked a schema");
-    eval.checkPublishedSchema("application/capnp;VehicleSpeed", std::nullopt);
-    expect(eval.publishedSchemaChecked(), "the first check, even a mismatch, latches");
-    eval.checkPublishedSchema("application/capnp;EngineRpm");
-    expect(eval.publishedSchemaChecked(), "and it stays latched");
-
-    auto plain = evaluatorFor("rpm");
-    plain.checkPublishedSchema("");
-    expect(plain.publishedSchemaChecked(), "the one-argument check latches too");
+    expect(!eval.admitsPublisher("VehicleSpeed", std::nullopt), "a mismatch is refused");
+    expect(eval.publisherVerdict() == std::optional<bool>(false), "and the refusal is kept");
+    expect(!eval.admitsPublisher("EngineRpm", std::nullopt),
+           "a later matching name does not overturn it");
 }
 
 }  // namespace
@@ -775,8 +770,8 @@ int main()
 
     testVariableNamesAreReported();
     testSchemaAndExpressionAreReportedBack();
-    testCheckPublishedSchemaToleratesAnything();
-    testPublishedSchemaCheckedLatches();
+    testAdmitsPublisherJudgesTheBareName();
+    testPublisherVerdictLatches();
 
     std::fprintf(stderr, "%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

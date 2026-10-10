@@ -1,5 +1,6 @@
 #include "pub_sub/expression_subscriber.h"
 
+#include "pub_sub/capnp_encoding.h"
 #include "pub_sub/detail/byte_subscriber.h"
 
 #include <spdlog/spdlog.h>
@@ -69,13 +70,18 @@ ZenohExpressionSubscriber::ZenohExpressionSubscriber(schema_type_t schema_type,
             {
                 return;
             }
-            // Tested here rather than inside the check, because the check's
-            // arguments are a string copy and an attachment read.
-            if (!impl->evaluator->publishedSchemaChecked())
+            // Asked first, because the check's arguments are a string copy and
+            // an attachment read, and the verdict is latched after one sample.
+            std::optional<bool> admitted = impl->evaluator->publisherVerdict();
+            if (!admitted)
             {
-                impl->evaluator->checkPublishedSchema(meta.encoding(), meta.layout());
+                admitted = impl->evaluator->admitsPublisher(
+                    schemaNameFromEncoding(meta.encoding()), meta.layout());
             }
-            impl->handler(payload);
+            if (*admitted)
+            {
+                impl->handler(payload);
+            }
         });
 
     impl_->subscription_valid = impl_->subscriber->isValid();

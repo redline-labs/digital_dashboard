@@ -70,31 +70,20 @@ class ExpressionEvaluator
     // consumer that wants to show what a binding actually depends on.
     const std::vector<std::string>& variableNames() const;
 
-    // Compares the schema this was configured for against the one a publisher
-    // stamped on a sample, and complains loudly, once, if they differ.
+    // Whether this key's publisher may be evaluated at all: the schema name it
+    // stamped and its revision, judged against the configured schema by
+    // SampleGate. capnp decodes a payload against whatever schema it is handed,
+    // so a mismatch would read as plausible wrong numbers; it is refused and said
+    // once instead.
     //
-    // Worth calling on the first sample of every stream. capnp will decode a
-    // payload against whatever schema it is handed -- field offsets simply land
-    // on different bytes -- so a wrong schema produces a plausible but
-    // meaningless number rather than an error. This is the only place the
-    // mismatch is detectable at all.
-    //
-    // Takes the whole encoding string ("application/capnp;EngineRpm"), not the
-    // schema half, so it can tell "published as something else" apart from
-    // "published with no schema named", which are different situations and
-    // deserve different messages. Latched: a malformed publisher would
-    // otherwise churn the log at the sample rate.
-    void checkPublishedSchema(std::string_view encoding);
+    // `published_name` is the bare name, as RawSubscriber and BagMessage carry
+    // it ("" when none was stamped). Judged on the first call and latched: the
+    // verdict is returned unchanged after that, so a caller with a costly way to
+    // build the arguments asks publisherVerdict() first.
+    bool admitsPublisher(std::string_view published_name, std::optional<std::uint64_t> layout);
 
-    // The same, plus the publisher's layout fingerprint: the same schema NAME
-    // from a node built against a different revision of it decodes into
-    // plausible wrong numbers, and this is where that is visible.
-    void checkPublishedSchema(std::string_view encoding, std::optional<std::uint64_t> layout);
-
-    // True once either check above has run. A subscriber tests this before
-    // building the encoding string and layout it would otherwise pass on every
-    // sample, only to have them ignored.
-    bool publishedSchemaChecked() const;
+    // The latched verdict, or nullopt before the first admitsPublisher().
+    std::optional<bool> publisherVerdict() const;
 
     // Evaluate the expression against one payload.
     //
