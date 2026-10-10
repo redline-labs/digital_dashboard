@@ -2,6 +2,7 @@
 #include "motec_m1_messages.h"
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "node_health/can_decoder.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -210,26 +211,18 @@ static void publishAuxOutput5(const M1_GEN_0x6A1_t& m, pub_sub::ZenohPublisher<M
 
 int main(int argc, char** argv)
 {
-    cxxopts::Options options("motec_m1", "MoTeC M1 node");
-    options.add_options()
+    core::setupLogging({.program = "motec_m1"});
+    cli::NodeCommandLine cli("motec_m1", "MoTeC M1 node");
+    cli.add()
         ("s,source", "Zenoh key carrying CAN frames",
-            cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
+         cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
         ("p,prefix", "Zenoh key prefix for this node's topics",
-            cxxopts::value<std::string>()->default_value("nodes/motec_m1"))
-        ("debug", "Debug logging.",
-            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-        ("h,help", "Print usage");
-
-    auto result = options.parse(argc, argv);
-    if (result.count("help"))
+         cxxopts::value<std::string>()->default_value("nodes/motec_m1"));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
+        return *exit;
     }
-
-    // Logging is set up AFTER the parse, so --debug decides the level rather
-    // than the level being forced before anyone can ask for anything else.
-    core::setupLogging({.program = "motec_m1", .debug = result["debug"].as<bool>()});
+    const cxxopts::ParseResult& result = cli.result();
 
     const std::string can_key = result["source"].as<std::string>();
     const std::string prefix = result["prefix"].as<std::string>();

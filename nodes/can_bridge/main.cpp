@@ -24,6 +24,7 @@
 // that exits on the first problem is a bridge that has to be babysat.
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "bridged_channel.h"
 #include "channel_health.h"
 #include "node_config.h"
@@ -208,41 +209,21 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "can_bridge"});
 
-    cxxopts::Options options("can_bridge", "Bridge CAN hardware to zenoh topics");
-    options.add_options()
-        ("config", "Node configuration YAML", cxxopts::value<std::string>())
+    cli::NodeCommandLine cli("can_bridge", "Bridge CAN hardware to zenoh topics");
+    cli.withConfig();
+    cli.add()
         ("l,list", "List the CAN channels this machine can see, then exit")
-        // The client side of the bitrate service, so changing a running
-        // bridge's bit rate does not need a program written for the occasion.
         ("set-bitrate",
          "Ask a running bridge to change a channel's bit rate, then exit: "
          "<channel>=<nominal>[:<data>]",
          cxxopts::value<std::string>())
         ("service-key", "Which bridge to ask, when --set-bitrate is used",
-         cxxopts::value<std::string>()->default_value("vehicle/can/set_bitrate"))
-        ("v,verbose", "Enable debug logging")
-        ("h,help", "Print usage");
-
-    cxxopts::ParseResult args;
-    try
+         cxxopts::value<std::string>()->default_value("vehicle/can/set_bitrate"));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        args = options.parse(argc, argv);
+        return *exit;
     }
-    catch (const std::exception& error)
-    {
-        SPDLOG_ERROR("[node] {}", error.what());
-        return 1;
-    }
-
-    if (args.count("help") != 0)
-    {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
-    if (args.count("verbose") != 0)
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
+    const cxxopts::ParseResult& args = cli.result();
 
     // --list before --config, so "what can I even open" needs no config file.
     if (args.count("list") != 0)

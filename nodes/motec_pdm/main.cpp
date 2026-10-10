@@ -10,6 +10,7 @@
 #include <algorithm>
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "node_health/can_decoder.h"
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
@@ -25,18 +26,15 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "motec_pdm"});
 
-    cxxopts::Options options("motec_pdm", "Decode PDM_Generic_Output.dbc frames and publish typed telemetry");
-    options.add_options()
+    cli::NodeCommandLine cli("motec_pdm", "Decode PDM_Generic_Output.dbc frames and publish typed telemetry");
+    cli.add()
         ("s,source", "Zenoh key to subscribe to CAN frames", cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
-        ("p,prefix", "Zenoh key prefix for PDM topics", cxxopts::value<std::string>()->default_value("nodes/motec_pdm"))
-        ("h,help", "Print usage");
-
-    auto result = options.parse(argc, argv);
-    if (result.count("help"))
+        ("p,prefix", "Zenoh key prefix for PDM topics", cxxopts::value<std::string>()->default_value("nodes/motec_pdm"));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
+        return *exit;
     }
+    const cxxopts::ParseResult& result = cli.result();
 
     const std::string can_key = result["source"].as<std::string>();
     const std::string prefix  = result["prefix"].as<std::string>();

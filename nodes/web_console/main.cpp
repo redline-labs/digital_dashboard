@@ -13,6 +13,7 @@
 #include "update_routes.h"
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "core/core.h"
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
@@ -28,38 +29,21 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "web_console"});
 
-    cxxopts::Options options("web_console",
-                             "Web console: serves the board's system information, node health, "
-                             "service calls and RAUC reflash");
-    options.add_options()
-        ("c,config", "YAML configuration file", cxxopts::value<std::string>())
-        ("check", "Parse the configuration, report problems and exit")
-        ("v,verbose", "Log every request")
-        ("h,help", "Print usage");
-
-    cxxopts::ParseResult parsed;
-    try
+    cli::NodeCommandLine cli("web_console",
+                             "Web console: serves the board's system information, node health, " "service calls and RAUC reflash");
+    cli.withConfig();
+    cli.add()
+        ("check", "Parse the configuration, report problems and exit");
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        parsed = options.parse(argc, argv);
+        return *exit;
     }
-    catch (const std::exception& error)
-    {
-        SPDLOG_ERROR("{}", error.what());
-        return 2;
-    }
-
-    if (parsed.count("help"))
-    {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
-
-    spdlog::set_level(parsed.count("verbose") ? spdlog::level::debug : spdlog::level::info);
+    const cxxopts::ParseResult& parsed = cli.result();
 
     web_console::NodeConfig config;
-    if (parsed.count("config"))
+    if (!cli.config().empty())
     {
-        if (!web_console::load_node_config(parsed["config"].as<std::string>(), config))
+        if (!web_console::load_node_config(cli.config(), config))
         {
             return 2;
         }

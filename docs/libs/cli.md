@@ -26,6 +26,7 @@ plus a file. It builds on [core](core.html) for the log pattern and on
 | `cli/program.h` | `Program`, `Verb`, `Context`, and the exit codes `kOk`, `kFailure`, `kUsage`. |
 | `cli/output.h` | `out()`, `outPartial()` and `flush()`: tool results on stdout, unadorned. |
 | `cli/interrupt.h` | `installInterruptHandler()`, `interrupted()` and `waitForInterrupt()`, for verbs and nodes that run until told to stop: SIGINT and SIGTERM. |
+| `cli/node_options.h` | `NodeCommandLine`: the flags every node takes -- `-c/--config`, `-d/--debug` and its synonym `-v/--verbose`, `--connect`, `--mode`, `-h/--help` -- with help on stdout (exit 0) and usage errors exiting 2. |
 | `cli/session_options.h` | `applySessionOverrides()`: `--connect` and `--mode` into `SessionManager` config. Called by `Program::run()`; verbs do not call it. |
 
 ## Using it

@@ -8,6 +8,8 @@ add_library(cli STATIC
     program.cpp
     interrupt.cpp
     session_options.cpp
+    # The flags every node takes, spelled once.
+    node_options.cpp
 )
 
 target_include_directories(cli PUBLIC
@@ -53,3 +55,9 @@ target_link_libraries(cli_test_interrupt PRIVATE
     cli
 )
 add_project_test(TARGET cli_test_interrupt LABELS cli unit)
+
+# The node command line: every spelling of --debug, --config with and without a
+# default, help on stdout with exit 0, and a usage error with exit 2.
+add_executable(cli_test_node_options test_node_options.cpp)
+target_link_libraries(cli_test_node_options PRIVATE cli spdlog::spdlog)
+add_project_test(TARGET cli_test_node_options LABELS cli unit)

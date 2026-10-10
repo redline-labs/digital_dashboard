@@ -1,4 +1,5 @@
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "node_health/can_decoder.h"
 #include "pub_sub/zenoh_service.h"
 #include "pub_sub/node_identity.h"
@@ -40,41 +41,18 @@ static void handle_diagnostics_message(const dbc_motec_e888_rev1::Diagnostics_t&
 
 int main(int argc, char** argv)
 {
-    // This used to be core::init_core(argc, argv), which parsed the command line
-    // as well as setting up logging -- under a hardcoded
-    // cxxopts::Options("dashboard", "Vehicle instrument cluster."), so
-    // `racegrade_tc8 --help` printed the dashboard's usage. The parse belongs to
-    // the program that owns the options.
-    cxxopts::Options options("racegrade_tc8", "RaceGrade TC8 node");
-    options.add_options()
+    core::setupLogging({.program = "racegrade_tc8"});
+    cli::NodeCommandLine cli("racegrade_tc8", "RaceGrade TC8 node");
+    cli.add()
         ("s,source", "Zenoh key carrying CAN frames",
-            cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
+         cxxopts::value<std::string>()->default_value("vehicle/can0/rx"))
         ("p,prefix", "Zenoh key prefix for this node's topics",
-            cxxopts::value<std::string>()->default_value("nodes/racegrade_tc8"))
-        ("debug", "Enable debug logging.",
-            cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-        ("h,help", "Print usage");
-
-    cxxopts::ParseResult args;
-    try
+         cxxopts::value<std::string>()->default_value("nodes/racegrade_tc8"));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        args = options.parse(argc, argv);
+        return *exit;
     }
-    catch (const std::exception& e)
-    {
-        core::setupLogging(false);
-        SPDLOG_CRITICAL("{}", e.what());
-        SPDLOG_INFO("{}", options.help());
-        return 1;
-    }
-
-    core::setupLogging(args["debug"].as<bool>());
-
-    if (args.count("help") != 0)
-    {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
+    const cxxopts::ParseResult& args = cli.result();
 
     // Announce this process so tools can put a name to the session id that
     // appears on every topic it advertises and every sample it stamps. See

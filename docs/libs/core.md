@@ -60,9 +60,6 @@ that cannot be opened is a warning on the console, never a failure.
 `stderr_only` replaces every sink with stderr; the apps set it under `--mcp`
 because stdout is the protocol channel there.
 
-The two-argument `setupLogging(bool)` overload sets pattern and level only and
-leaves sinks alone. Prefer the options form.
-
 `dataDir()` is `REDLINE_DATA_DIR` when set, otherwise `$XDG_DATA_HOME/redline`
 or `~/.local/share/redline` on Linux and
 `~/Library/Application Support/redline` on macOS.

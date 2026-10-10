@@ -44,10 +44,6 @@ struct LoggingOptions
 // on a read-only rootfs). REDLINE_LOG_DIR=logs restores the old behaviour.
 void setupLogging(const LoggingOptions& options);
 
-// Pattern and level only; sinks untouched. Kept for callers that manage their
-// own sinks. Prefer the options form.
-void setupLogging(bool debug_enabled);
-
 // ---- paths ------------------------------------------------------------------
 
 namespace paths

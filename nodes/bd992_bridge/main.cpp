@@ -29,6 +29,7 @@
 
 #include <cxxopts.hpp>
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -269,52 +270,31 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "bd992_bridge"});
 
-    std::string configPath;
     std::string replayPath;
     std::string dumpPath;
     bool probe = false;
     bool check = false;
     bool loop = false;
-    bool debug = false;
     unsigned replayDelayMs = 0;
 
-    try
+    cli::NodeCommandLine cli("bd992_bridge", "Bridge a Trimble BD992 GNSS receiver onto zenoh");
+    cli.withConfig();
+    cli.add()
+        ("probe", "Print the receiver's output configuration and exit", cxxopts::value<bool>(probe))
+        ("check", "Report configuration drift and exit non-zero if any", cxxopts::value<bool>(check))
+        ("replay", "Replay a captured GSOF byte stream instead of connecting",
+         cxxopts::value<std::string>(replayPath))
+        ("loop", "With --replay, start again at the end of the capture", cxxopts::value<bool>(loop))
+        ("replay-delay-ms",
+         "With --replay, milliseconds between chunks. 0 replays as fast as the bus will take it, "
+         "which is right for a test and far too fast to watch",
+         cxxopts::value<unsigned>(replayDelayMs))
+        ("dump-gsof", "Write the raw received bytes to a file", cxxopts::value<std::string>(dumpPath));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        cxxopts::Options options("bd992_bridge", "Bridge a Trimble BD992 GNSS receiver onto zenoh");
-        options.add_options()
-            ("c,config", "YAML configuration file", cxxopts::value<std::string>(configPath))
-            ("probe", "Print the receiver's output configuration and exit",
-             cxxopts::value<bool>(probe))
-            ("check", "Report configuration drift and exit non-zero if any", cxxopts::value<bool>(check))
-            ("replay", "Replay a captured GSOF byte stream instead of connecting",
-             cxxopts::value<std::string>(replayPath))
-            ("loop", "With --replay, start again at the end of the capture", cxxopts::value<bool>(loop))
-            ("replay-delay-ms",
-             "With --replay, milliseconds between chunks. 0 replays as fast as the bus will take it, "
-             "which is right for a test and far too fast to watch",
-             cxxopts::value<unsigned>(replayDelayMs))
-            ("dump-gsof", "Write the raw received bytes to a file", cxxopts::value<std::string>(dumpPath))
-            ("d,debug", "Verbose logging", cxxopts::value<bool>(debug))
-            ("h,help", "Print usage");
-
-        const cxxopts::ParseResult parsed = options.parse(argc, argv);
-
-        if (parsed.count("help") != 0)
-        {
-            SPDLOG_INFO("{}", options.help());
-            return 0;
-        }
+        return *exit;
     }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("bd992: {}", e.what());
-        return 2;
-    }
-
-    if (debug)
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
+    const std::string configPath = cli.config();
 
     if (configPath.empty())
     {

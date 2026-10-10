@@ -16,6 +16,7 @@
 //   (default)     serve
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -211,37 +212,18 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "map_server"});
 
-    std::string configPath;
     bool check = false;
-    bool debug = false;
 
-    try
+    cli::NodeCommandLine cli("map_server", "Serve .mbtiles archives over zenoh");
+    cli.withConfig();
+    cli.add()
+        ("check", "Open every archive, report what is in it, and exit.",
+         cxxopts::value<bool>(check));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        cxxopts::Options options("map_server", "Serve .mbtiles archives over zenoh");
-        options.add_options()
-            ("c,config", "YAML configuration file.", cxxopts::value<std::string>(configPath))
-            ("check", "Open every archive, report what is in it, and exit.",
-                cxxopts::value<bool>(check))
-            ("debug", "Verbose logging.", cxxopts::value<bool>(debug))
-            ("h,help", "Print usage.");
-
-        const auto args = options.parse(argc, argv);
-        if (args.count("help") != 0)
-        {
-            SPDLOG_INFO("{}", options.help());
-            return 0;
-        }
+        return *exit;
     }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("{}", e.what());
-        return 2;
-    }
-
-    if (debug)
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
+    const std::string configPath = cli.config();
 
     if (configPath.empty())
     {

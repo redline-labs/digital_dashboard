@@ -25,6 +25,7 @@
 #include "display_backlight/sysfs.h"
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
@@ -240,37 +241,18 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "backlight"});
 
-    cxxopts::Options options("backlight",
-                             "Display backlight node: publishes the module's backlight, light and "
-                             "temperature sensors, and sets its brightness");
-    options.add_options()
-        ("c,config", "YAML configuration file", cxxopts::value<std::string>())
-        ("v,verbose", "Log every status read")
-        ("h,help", "Print usage");
-
-    cxxopts::ParseResult parsed;
-    try
+    cli::NodeCommandLine cli("backlight",
+                             "Display backlight node: publishes the module's backlight, light and " "temperature sensors, and sets its brightness");
+    cli.withConfig();
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        parsed = options.parse(argc, argv);
+        return *exit;
     }
-    catch (const std::exception& error)
-    {
-        SPDLOG_ERROR("{}", error.what());
-        return 2;
-    }
-
-    if (parsed.count("help"))
-    {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
-
-    spdlog::set_level(parsed.count("verbose") ? spdlog::level::debug : spdlog::level::info);
 
     backlight_node::NodeConfig config;
-    if (parsed.count("config"))
+    if (!cli.config().empty())
     {
-        if (!backlight_node::load_node_config(parsed["config"].as<std::string>(), config))
+        if (!backlight_node::load_node_config(cli.config(), config))
         {
             return 2;
         }

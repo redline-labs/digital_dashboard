@@ -24,7 +24,11 @@ The pieces every node has:
 int main(int argc, char** argv)
 {
     core::setupLogging({.program = "my_node"});     // spdlog, REDLINE_LOG_DIR, the pattern
-    // ... cxxopts for the command line ...
+
+    cli::NodeCommandLine cli("my_node", "What it bridges");  // -c, -d/-v, --connect, --mode, -h
+    cli.withConfig();
+    cli.add()("check", "Validate the config and exit");
+    if (const auto exit = cli.parse(argc, argv)) return *exit;  // 0 for --help, 2 for a usage error
 
     pub_sub::NodeIdentity node_identity("my_node"); // announces the process on the bus
     cli::installInterruptHandler();                 // SIGINT and SIGTERM
@@ -46,7 +50,10 @@ int main(int argc, char** argv)
 
 `core::setupLogging` is where the runtime environment variables are honoured,
 so a node that calls it behaves the same on a desktop and under systemd on the
-target. Logging is `SPDLOG_*`, never `std::cout`.
+target. `cli::NodeCommandLine` is where the flags every node shares are
+declared, so `-c/--config`, `-d/--debug` (and `-v/--verbose`, the same switch)
+and `--connect`/`--mode` mean the same thing on every node, `--help` prints to
+stdout and exits 0, and a usage error exits 2. Logging is `SPDLOG_*`, never `std::cout`.
 
 Every node publishes health. Declare the
 [HealthReporter](../libs/node_health.html) before anything whose callbacks touch

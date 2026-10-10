@@ -30,6 +30,7 @@
 
 #include <cxxopts.hpp>
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -305,56 +306,33 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "mti610_bridge"});
 
-    std::string configPath;
     std::string replayPath;
     std::string dumpPath;
-    bool debug = false;
     bool loop = false;
     bool probe = false;
     bool check = false;
 
-    try
+    cli::NodeCommandLine cli("mti610_bridge", "Bridge an Xsens MTi-610 onto the zenoh bus");
+    cli.withConfig();
+    cli.add()
+        ("probe", "Identify the device and print its output configuration, then exit",
+         cxxopts::value<bool>(probe))
+        ("check", "Exit non-zero if the device does not match the config file",
+         cxxopts::value<bool>(check))
+        ("replay", "Replay a captured byte stream instead of opening a port",
+         cxxopts::value<std::string>(replayPath))
+        ("loop", "Replay the capture repeatedly", cxxopts::value<bool>(loop))
+        ("dump-xbus", "Write every received byte to this file",
+         cxxopts::value<std::string>(dumpPath));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        cxxopts::Options options("mti610_bridge", "Bridge an Xsens MTi-610 onto the zenoh bus");
-
-        options.add_options()
-            ("c,config", "YAML configuration file", cxxopts::value<std::string>(configPath))
-            ("d,debug", "Verbose logging", cxxopts::value<bool>(debug))
-            ("probe", "Identify the device and print its output configuration, then exit",
-             cxxopts::value<bool>(probe))
-            ("check", "Exit non-zero if the device does not match the config file",
-             cxxopts::value<bool>(check))
-            ("replay", "Replay a captured byte stream instead of opening a port",
-             cxxopts::value<std::string>(replayPath))
-            ("loop", "Replay the capture repeatedly", cxxopts::value<bool>(loop))
-            ("dump-xbus", "Write every received byte to this file",
-             cxxopts::value<std::string>(dumpPath))
-            ("h,help", "Print usage");
-
-        const cxxopts::ParseResult parsed = options.parse(argc, argv);
-
-        if (parsed.count("help") != 0)
-        {
-            fmt::print("{}\n", options.help());
-            return 0;
-        }
-
-        if (configPath.empty())
-        {
-            SPDLOG_ERROR("--config is required");
-            fmt::print("{}\n", options.help());
-            return 2;
-        }
+        return *exit;
     }
-    catch (const cxxopts::exceptions::exception& error)
+    const std::string configPath = cli.config();
+    if (configPath.empty())
     {
-        SPDLOG_ERROR("{}", error.what());
+        SPDLOG_ERROR("--config is required");
         return 2;
-    }
-
-    if (debug)
-    {
-        spdlog::set_level(spdlog::level::debug);
     }
 
     NodeConfig config;

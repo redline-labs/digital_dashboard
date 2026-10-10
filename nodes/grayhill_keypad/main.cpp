@@ -24,6 +24,7 @@
 //     channel accepts, so it was also out of range.
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "node_config.h"
 
 #include "canopen/nmt.h"
@@ -78,32 +79,13 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "grayhill_keypad"});
 
-    cxxopts::Options options("grayhill_keypad", "Grayhill 3K CANopen keypad");
-    options.add_options()
-        ("config", "Node configuration YAML", cxxopts::value<std::string>())
-        ("v,verbose", "Enable debug logging")
-        ("h,help", "Print usage");
-
-    cxxopts::ParseResult args;
-    try
+    cli::NodeCommandLine cli("grayhill_keypad", "Grayhill 3K CANopen keypad");
+    cli.withConfig();
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        args = options.parse(argc, argv);
+        return *exit;
     }
-    catch (const std::exception& error)
-    {
-        SPDLOG_ERROR("[node] {}", error.what());
-        return 1;
-    }
-
-    if (args.count("help") != 0)
-    {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
-    if (args.count("verbose") != 0)
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
+    const cxxopts::ParseResult& args = cli.result();
 
     if (args.count("config") == 0)
     {

@@ -43,12 +43,6 @@ std::optional<std::string> env(const char* name)
 
 // ---- logging ----------------------------------------------------------------
 
-void setupLogging(bool debug_enabled)
-{
-    spdlog::set_pattern(kPattern);
-    spdlog::set_level(debug_enabled ? spdlog::level::debug : spdlog::level::info);
-}
-
 void setupLogging(const LoggingOptions& options)
 {
     auto& sinks = spdlog::default_logger()->sinks();
@@ -79,7 +73,8 @@ void setupLogging(const LoggingOptions& options)
         }
     }
 
-    setupLogging(options.debug);
+    spdlog::set_pattern(kPattern);
+    spdlog::set_level(options.debug ? spdlog::level::debug : spdlog::level::info);
 }
 
 // ---- paths ------------------------------------------------------------------

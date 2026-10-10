@@ -316,7 +316,7 @@ int Program::run(int argc, char** argv) const
 
     // Logging is configured before the verb runs but after --debug is known, so
     // a verb's own SPDLOG_DEBUG lines are subject to it.
-    core::setupLogging(parsed["debug"].as<bool>());
+    core::setupLogging({.program = std::string(name_), .debug = parsed["debug"].as<bool>()});
 
     if (parsed.count("help") != 0)
     {

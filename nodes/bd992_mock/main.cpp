@@ -25,6 +25,7 @@
 
 #include <cxxopts.hpp>
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -153,7 +154,6 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "bd992_mock"});
 
-    std::string configPath;
     std::string routeFrom;
     std::string routeTo;
     std::string trackQuery;
@@ -161,49 +161,29 @@ int main(int argc, char** argv)
     bool loop = false;
     bool noSpeedLimits = false;
     bool check = false;
-    bool debug = false;
 
-    try
+    cli::NodeCommandLine cli("bd992_mock", "Simulate a BD992 driving a route or a track from map_server");
+    cli.withConfig();
+    cli.add()
+        ("route", "Start of a road route, as 'lat,lon'.",
+         cxxopts::value<std::string>(routeFrom))
+        ("to", "Destination of a road route, as 'lat,lon'.",
+         cxxopts::value<std::string>(routeTo))
+        ("track", "Drive a race track's centreline, by id or name.",
+         cxxopts::value<std::string>(trackQuery))
+        ("profile", "Routing cost profile. Empty means the graph's default.",
+         cxxopts::value<std::string>(profile))
+        ("loop", "Start again on reaching the end. Circuits always lap.",
+         cxxopts::value<bool>(loop))
+        ("no-speed-limits", "Skip the map/nearest pass; drive at the cruise speed.",
+         cxxopts::value<bool>(noSpeedLimits))
+        ("check", "Resolve the path, report it, and exit without publishing.",
+         cxxopts::value<bool>(check));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        cxxopts::Options options("bd992_mock",
-                                 "Simulate a BD992 driving a route or a track from map_server");
-        options.add_options()                                                              //
-            ("c,config", "YAML configuration file. Optional: the defaults are this tree's.",
-             cxxopts::value<std::string>(configPath))                                      //
-            ("route", "Start of a road route, as 'lat,lon'.",
-             cxxopts::value<std::string>(routeFrom))                                       //
-            ("to", "Destination of a road route, as 'lat,lon'.",
-             cxxopts::value<std::string>(routeTo))                                         //
-            ("track", "Drive a race track's centreline, by id or name.",
-             cxxopts::value<std::string>(trackQuery))                                      //
-            ("profile", "Routing cost profile. Empty means the graph's default.",
-             cxxopts::value<std::string>(profile))                                         //
-            ("loop", "Start again on reaching the end. Circuits always lap.",
-             cxxopts::value<bool>(loop))                                                   //
-            ("no-speed-limits", "Skip the map/nearest pass; drive at the cruise speed.",
-             cxxopts::value<bool>(noSpeedLimits))                                          //
-            ("check", "Resolve the path, report it, and exit without publishing.",
-             cxxopts::value<bool>(check))                                                  //
-            ("d,debug", "Verbose logging.", cxxopts::value<bool>(debug))                   //
-            ("h,help", "Print usage.");
-
-        const auto args = options.parse(argc, argv);
-        if (args.count("help") != 0)
-        {
-            SPDLOG_INFO("{}", options.help());
-            return 0;
-        }
+        return *exit;
     }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("{}", e.what());
-        return 2;
-    }
-
-    if (debug)
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
+    const std::string configPath = cli.config();
 
     const bool wantRoute = !routeFrom.empty() || !routeTo.empty();
     const bool wantTrack = !trackQuery.empty();

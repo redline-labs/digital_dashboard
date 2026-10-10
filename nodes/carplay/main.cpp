@@ -11,6 +11,7 @@
 // dashboard side without any hardware.
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "zenoh_bridge.h"
@@ -39,12 +40,11 @@ int main(int argc, char** argv)
     // unfiltered, in the middle of our own output.
     helpers::routeFfmpegLogsToSpdlog();
 
-    cxxopts::Options options("carplay", "Wired CarPlay driver node");
-    options.add_options()
+    cli::NodeCommandLine cli("carplay", "Wired CarPlay driver node");
+    cli.withConfig();
+    cli.add()
         ("key-prefix", "Zenoh key prefix for all published/subscribed topics",
          cxxopts::value<std::string>()->default_value("nodes/carplay"))
-        ("c,config", "Node configuration YAML (required; see configs/carplay/carplay.yaml)",
-         cxxopts::value<std::string>())
         ("state-dir", "Directory for accessory identity and pair records",
          cxxopts::value<std::string>()->default_value(""))
         ("simulate", "Publish a synthetic session (no phone required) for dashboard testing")
@@ -69,20 +69,12 @@ int main(int argc, char** argv)
         ("location",
          "Static GPS fix for testing the location uplink, \"lat,lon[,alt_m,speed_kn,course_deg]\" "
          "(otherwise a GPS source publishes on <prefix>/location)",
-         cxxopts::value<std::string>()->default_value(""))
-        ("v,verbose", "Enable debug logging")
-        ("h,help", "Print usage");
-
-    const auto args = options.parse(argc, argv);
-    if (args.count("help"))
+         cxxopts::value<std::string>()->default_value(""));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
+        return *exit;
     }
-    if (args.count("verbose"))
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
+    const cxxopts::ParseResult& args = cli.result();
 
     cli::installInterruptHandler();
 

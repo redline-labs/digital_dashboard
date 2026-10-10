@@ -28,6 +28,7 @@
 
 #include <cxxopts.hpp>
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -176,37 +177,17 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "xpr_bridge"});
 
-    std::string configPath;
     bool probe = false;
-    bool debug = false;
 
-    try
+    cli::NodeCommandLine cli("xpr_bridge", "Bridge a Motorola MOTOTRBO radio onto zenoh");
+    cli.withConfig();
+    cli.add()
+        ("probe", "Print the radio's identity and channel, then exit", cxxopts::value<bool>(probe));
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        cxxopts::Options options("xpr_bridge", "Bridge a Motorola MOTOTRBO radio onto zenoh");
-        options.add_options()
-            ("c,config", "YAML configuration file", cxxopts::value<std::string>(configPath))
-            ("probe", "Print the radio's identity and channel, then exit", cxxopts::value<bool>(probe))
-            ("d,debug", "Verbose logging", cxxopts::value<bool>(debug))
-            ("h,help", "Print usage");
-
-        const cxxopts::ParseResult parsed = options.parse(argc, argv);
-
-        if (parsed.count("help") != 0)
-        {
-            SPDLOG_INFO("{}", options.help());
-            return 0;
-        }
+        return *exit;
     }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("xpr: {}", e.what());
-        return 2;
-    }
-
-    if (debug)
-    {
-        spdlog::set_level(spdlog::level::debug);
-    }
+    const std::string configPath = cli.config();
 
     if (configPath.empty())
     {

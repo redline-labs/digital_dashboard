@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/chrono.h>
@@ -216,33 +217,22 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "state_estimator"});
 
-    cxxopts::Options options("state_estimator", "Vehicle state estimator: IMU + dual-antenna GNSS fixed-lag smoother");
-    options.add_options()("c,config", "Config file", cxxopts::value<std::string>()->default_value(
-                                                          "configs/state_estimator/state_estimator.yaml"))(
-        "check", "Validate the config and exit")("replay", "Run over a bag directory instead of the bus",
-                                                  cxxopts::value<std::string>())(
-        "calibration-db", "With --replay: the calibration store to read and write (none by default)",
-        cxxopts::value<std::string>())(
-        "debug", "Debug logging")("h,help", "Help");
-    cxxopts::ParseResult args;
-    try
+    cli::NodeCommandLine cli("state_estimator",
+                             "Vehicle state estimator: IMU + dual-antenna GNSS fixed-lag smoother");
+    cli.withConfig("configs/state_estimator/state_estimator.yaml");
+    cli.add()
+        ("check", "Validate the config and exit")
+        ("replay", "Run over a bag directory instead of the bus", cxxopts::value<std::string>())
+        ("calibration-db", "With --replay: the calibration store to read and write (none by default)",
+         cxxopts::value<std::string>());
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        args = options.parse(argc, argv);
+        return *exit;
     }
-    catch (const cxxopts::exceptions::exception& e)
-    {
-        SPDLOG_ERROR("{}", e.what());
-        return 2;
-    }
-    if (args.count("help"))
-    {
-        fmt::print("{}\n", options.help());
-        return 0;
-    }
-    if (args.count("debug")) spdlog::set_level(spdlog::level::debug);
+    const cxxopts::ParseResult& args = cli.result();
 
     state_estimator::NodeConfig config;
-    if (!state_estimator::load_node_config(args["config"].as<std::string>(), config)) return 1;
+    if (!state_estimator::load_node_config(cli.config(), config)) return 1;
     if (args.count("check"))
     {
         SPDLOG_INFO("config ok: IMU from '{}', GNSS from '{}', state on '{}'", config.imuPrefix, config.gnssPrefix,

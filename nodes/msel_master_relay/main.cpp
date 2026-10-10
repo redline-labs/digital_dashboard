@@ -44,6 +44,7 @@
 //     why it is logged loudly.
 
 #include "cli/interrupt.h"
+#include "cli/node_options.h"
 #include "node_config.h"
 
 #include "msel/decoder.h"
@@ -264,32 +265,13 @@ int main(int argc, char** argv)
 {
     core::setupLogging({.program = "msel_master_relay"});
 
-    cxxopts::Options options("msel_master_relay",
-                             "MSEL Master Relay node: publishes isolator state and exposes its "
-                             "settings as services");
-    options.add_options()
-        ("c,config", "YAML configuration file", cxxopts::value<std::string>())
-        ("v,verbose", "Log every decoded frame")
-        ("h,help", "Print usage");
-
-    cxxopts::ParseResult parsed;
-    try
+    cli::NodeCommandLine cli("msel_master_relay", "MSEL Master Relay node: publishes isolator state and exposes its settings as services");
+    cli.withConfig();
+    if (const std::optional<int> exit = cli.parse(argc, argv))
     {
-        parsed = options.parse(argc, argv);
+        return *exit;
     }
-    catch (const std::exception& error)
-    {
-        SPDLOG_ERROR("{}", error.what());
-        return 2;
-    }
-
-    if (parsed.count("help"))
-    {
-        SPDLOG_INFO("{}", options.help());
-        return 0;
-    }
-
-    spdlog::set_level(parsed.count("verbose") ? spdlog::level::debug : spdlog::level::info);
+    const cxxopts::ParseResult& parsed = cli.result();
 
     msel_node::NodeConfig config;
     if (parsed.count("config"))
