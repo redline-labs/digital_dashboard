@@ -3,6 +3,7 @@
 
 #include "pub_sub/expression_evaluator.h"
 #include "pub_sub/schema_registry.h"
+#include "pub_sub/subscription.h"
 
 #include <cstdint>
 #include <functional>
@@ -40,6 +41,15 @@ class ZenohExpressionSubscriber
     ZenohExpressionSubscriber(schema_type_t schema_type,
                               const std::string& expression,
                               const std::string& zenoh_key);
+
+    // The same, from the config struct. stale_after_ms is not used here --
+    // staleness is the consumer's to track -- but it is in the struct the
+    // consumer holds.
+    explicit ZenohExpressionSubscriber(const subscription_t& subscription)
+        : ZenohExpressionSubscriber(subscription.schema_type, subscription.expression,
+                                    subscription.zenoh_key)
+    {
+    }
     ~ZenohExpressionSubscriber();
 
     // The subscription's callback holds a pointer to Impl, so the address has to

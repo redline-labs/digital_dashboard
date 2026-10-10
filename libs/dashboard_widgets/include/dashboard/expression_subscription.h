@@ -216,6 +216,31 @@ ExpressionSubscriptionPtr<T> makeExpressionSubscription(
     return subscription;
 }
 
+// The same, from the config struct a widget holds -- every field the YAML set
+// reaches the subscription, stale_after_ms included.
+//
+// An unbound subscription (empty key) returns nullptr and logs nothing: that is
+// a widget nobody has wired up yet, not a fault, and it is never stale.
+template <typename T, typename Receiver, typename Setter>
+ExpressionSubscriptionPtr<T> makeExpressionSubscription(const pub_sub::subscription_t& subscription,
+                                                        Receiver* receiver, Setter setter)
+{
+    if (subscription.zenoh_key.empty())
+    {
+        return nullptr;
+    }
+    return makeExpressionSubscription<T>(subscription.schema_type, subscription.expression,
+                                         subscription.zenoh_key, receiver, setter,
+                                         std::chrono::milliseconds(subscription.stale_after_ms));
+}
+
+// Null-safe: an unbound subscription is never stale.
+template <typename T>
+bool isStale(const ExpressionSubscriptionPtr<T>& subscription)
+{
+    return subscription && subscription->isStale();
+}
+
 }  // namespace dashboard
 
 #endif  // DASHBOARD_EXPRESSION_SUBSCRIPTION_H_
