@@ -18,6 +18,7 @@
 #include "editor/selection_frame.h"
 
 #include <cxxopts.hpp>
+#include "agent_control/app_bootstrap.h"
 #include <spdlog/spdlog.h>
 
 #include <unistd.h>
@@ -51,10 +52,8 @@ std::optional<EditorArgs> parseArgs(int argc, char** argv)
                 cxxopts::value<std::string>())
             ("debug", "Enable debug logging.",
                 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-            ("mcp", "Enable the agent control interface on a unix socket, and run headless "
-                    "(forces the Qt platform to 'offscreen'). Defaults to /tmp/redline_agent_<pid>.sock.",
-                cxxopts::value<std::string>()->implicit_value(""))
             ("h,help", "Print usage");
+        agent_control::addMcpOption(options, "editor");
 
         auto result = options.parse(argc, argv);
 
@@ -64,18 +63,8 @@ std::optional<EditorArgs> parseArgs(int argc, char** argv)
             return std::nullopt;
         }
 
-        // See the same check in dashboard/command_line_args.cpp: `--mcp <path>`
-        // does not bind the path (implicit values need `=`), and silently
-        // listening somewhere other than where the caller asked is worse than
-        // refusing to start.
-        if (!result.unmatched().empty())
+        if (!agent_control::rejectUnmatched(result))
         {
-            for (const auto& leftover : result.unmatched())
-            {
-                SPDLOG_CRITICAL("Unrecognised argument '{}'.", leftover);
-            }
-            SPDLOG_CRITICAL("Note: --mcp takes its value with '=', as in "
-                            "--mcp=/tmp/agent.sock. Bare --mcp uses the default path.");
             return std::nullopt;
         }
 
@@ -86,15 +75,7 @@ std::optional<EditorArgs> parseArgs(int argc, char** argv)
         }
         args.debug_enabled = result["debug"].as<bool>();
 
-        if (result.count("mcp") != 0)
-        {
-            std::string path = result["mcp"].as<std::string>();
-            if (path.empty())
-            {
-                path = "/tmp/redline_agent_" + std::to_string(::getpid()) + ".sock";
-            }
-            args.mcp_socket_path = path;
-        }
+        args.mcp_socket_path = agent_control::mcpSocketPath(result, "editor");
 
         return args;
     }
@@ -125,10 +106,7 @@ int main(int argc, char** argv)
     // chosen during its construction and cannot be changed afterwards.
     if (agent_mode)
     {
-        qputenv("QT_QPA_PLATFORM", "offscreen");
-
-        // The queryable ring behind app.logs, plus the Qt message bridge.
-        agent_control::installLogCapture();
+        agent_control::prepareHeadless();
     }
 
     // Announce this process so tools can put a name to the session id that
@@ -215,14 +193,10 @@ int main(int argc, char** argv)
         // handler, so they can call into the window directly.
         editor::agent::registerEditorMethods(*agent, w);
 
-        if (!agent->start(*args->mcp_socket_path))
+        if (!agent_control::startAndAnnounce(*agent, *args->mcp_socket_path))
         {
-            SPDLOG_CRITICAL("Failed to start the agent control interface on '{}'.",
-                            *args->mcp_socket_path);
             return -1;
         }
-
-        std::cout << "AGENT_READY " << *args->mcp_socket_path << " " << ::getpid() << std::endl;
     }
 
     const int rc = app.exec();

@@ -2,6 +2,7 @@
 #include "switchboard/switchboard_methods.h"
 #include "switchboard/switchboard_window.h"
 
+#include "agent_control/app_bootstrap.h"
 #include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
@@ -40,8 +41,7 @@ int main(int argc, char** argv)
     if (agent_mode)
     {
         // Headless, always -- see scope/main.cpp.
-        qputenv("QT_QPA_PLATFORM", "offscreen");
-        agent_control::installLogCapture();
+        agent_control::prepareHeadless();
     }
 
     QCoreApplication::setOrganizationName("redline");
@@ -72,15 +72,10 @@ int main(int argc, char** argv)
 
         switchboard::registerSwitchboardMethods(*agent, window);
 
-        if (!agent->start(*args->mcp_socket_path))
+        if (!agent_control::startAndAnnounce(*agent, *args->mcp_socket_path))
         {
-            SPDLOG_CRITICAL("Failed to start the agent control interface on '{}'.",
-                            *args->mcp_socket_path);
             return -1;
         }
-
-        // The readiness handshake a supervisor waits for. See scope/main.cpp.
-        std::cout << "AGENT_READY " << *args->mcp_socket_path << " " << ::getpid() << std::endl;
     }
 
     // Only a flag from the handler; the timer does the real work on the GUI

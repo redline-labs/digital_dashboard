@@ -8,6 +8,7 @@
 #include "dashboard/main_window.h"
 #include "dashboard/quit_on_signal.h"
 
+#include "agent_control/app_bootstrap.h"
 #include "agent_control/log_sink.h"
 #include "agent_control/methods.h"
 #include "agent_control/server.h"
@@ -61,11 +62,7 @@ int main(int argc, char** argv)
     {
         // Headless, always. No window manager, no display, no way for a stray
         // window to steal focus on a developer's desktop.
-        qputenv("QT_QPA_PLATFORM", "offscreen");
-
-        // The queryable ring behind app.logs, plus the bridge that routes Qt's
-        // own diagnostics into the same stream.
-        agent_control::installLogCapture();
+        agent_control::prepareHeadless();
     }
 
 
@@ -372,18 +369,10 @@ int main(int argc, char** argv)
         // to it is the fastest way to check a dashboard change.
         agent_control::registerZenohMethods(*agent);
 
-        if (!agent->start(*args->mcp_socket_path))
+        if (!agent_control::startAndAnnounce(*agent, *args->mcp_socket_path))
         {
-            SPDLOG_CRITICAL("Failed to start the agent control interface on '{}'.",
-                            *args->mcp_socket_path);
             return -1;
         }
-
-        // The readiness handshake. A supervising process waits for this line
-        // rather than polling for the socket file: the socket exists from the
-        // moment bind() returns, which is before the window is up, so a poller
-        // would connect too early and see an empty widget tree.
-        std::cout << "AGENT_READY " << *args->mcp_socket_path << " " << ::getpid() << std::endl;
     }
 
     app.exec();  // Blocking.

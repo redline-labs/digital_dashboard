@@ -12,6 +12,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 set(CMAKE_AUTOMOC ON)
 
 add_library(agent_control STATIC
+    app_bootstrap.cpp
     capture.cpp
     control_socket.cpp
     error.cpp
@@ -41,6 +42,9 @@ target_link_libraries(agent_control
         # PUBLIC: log_sink.h exposes a spdlog sink in its interface, so anything
         # installing the ring needs spdlog's headers too.
         spdlog::spdlog
+        # PUBLIC: app_bootstrap.h takes cxxopts types, so every app's argument
+        # parser declares --mcp through the same function.
+        cxxopts::cxxopts
     PRIVATE
         # zenoh.* methods. Both apps already link this; it is here so the
         # capnp<->JSON and topic-observation code is shared with nodes/inspect
@@ -49,6 +53,12 @@ target_link_libraries(agent_control
 )
 
 # ---------------------------------------------------------------------- tests
+
+# The shared --mcp option: default path, an explicit path with '=', and the
+# leftover-argument refusal that catches `--mcp /tmp/a.sock`.
+add_executable(agent_control_test_bootstrap test_bootstrap.cpp)
+target_link_libraries(agent_control_test_bootstrap PRIVATE agent_control spdlog::spdlog)
+add_project_test(TARGET agent_control_test_bootstrap LABELS agent_control unit)
 
 add_executable(agent_control_test_framing test_framing.cpp)
 target_link_libraries(agent_control_test_framing PRIVATE agent_control spdlog::spdlog)

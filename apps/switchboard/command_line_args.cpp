@@ -1,6 +1,7 @@
 #include "switchboard/command_line_args.h"
 
 #include <cxxopts.hpp>
+#include "agent_control/app_bootstrap.h"
 #include <spdlog/spdlog.h>
 
 #include <unistd.h>
@@ -12,10 +13,6 @@ namespace switchboard
 namespace
 {
 
-std::string defaultMcpSocketPath()
-{
-    return "/tmp/redline_switchboard_" + std::to_string(::getpid()) + ".sock";
-}
 
 }  // namespace
 
@@ -31,11 +28,8 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
                 cxxopts::value<int>()->default_value("2000"))
             ("debug", "Enable debug logging.",
                 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-            ("mcp", "Enable the agent control interface on a unix socket, and run headless "
-                    "(forces the Qt platform to 'offscreen'). Defaults to "
-                    "/tmp/redline_switchboard_<pid>.sock.",
-                cxxopts::value<std::string>()->implicit_value(""))
             ("h,help", "Print usage");
+        agent_control::addMcpOption(options, "switchboard");
 
         auto result = options.parse(argc, argv);
 
@@ -45,18 +39,8 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
             return std::nullopt;
         }
 
-        // Refuse leftovers rather than ignoring them: cxxopts options with an
-        // implicit value do NOT consume a space-separated argument, so
-        // `--mcp /tmp/a.sock` would silently listen on the default path instead.
-        // Same check, for the same reason, as scope and the dashboard.
-        if (!result.unmatched().empty())
+        if (!agent_control::rejectUnmatched(result))
         {
-            for (const auto& leftover : result.unmatched())
-            {
-                SPDLOG_CRITICAL("Unrecognised argument '{}'.", leftover);
-            }
-            SPDLOG_CRITICAL("Note: --mcp takes its value with '=', as in "
-                            "--mcp=/tmp/agent.sock. Bare --mcp uses the default path.");
             return std::nullopt;
         }
 
@@ -70,15 +54,7 @@ std::optional<CommandLineArgs> parseCommandLineArgs(int argc, char** argv)
             return std::nullopt;
         }
 
-        if (result.count("mcp") != 0)
-        {
-            std::string path = result["mcp"].as<std::string>();
-            if (path.empty())
-            {
-                path = defaultMcpSocketPath();
-            }
-            parsed.mcp_socket_path = path;
-        }
+        parsed.mcp_socket_path = agent_control::mcpSocketPath(result, "switchboard");
 
         return parsed;
     }
