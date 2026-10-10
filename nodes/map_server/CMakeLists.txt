@@ -64,7 +64,7 @@ target_link_libraries(map_server_test_config
         yaml-cpp::yaml-cpp
 )
 
-add_project_test(TARGET map_server_test_config LABELS map unit)
+add_project_test(TARGET map_server_test_config LABELS map_server map unit)
 
 # The containment check. This is the only code in the node that turns text off
 # the bus into a filesystem path, and the case worth the test is the sibling
@@ -84,7 +84,7 @@ target_link_libraries(map_server_test_assets
         spdlog::spdlog
 )
 
-add_project_test(TARGET map_server_test_assets LABELS map unit)
+add_project_test(TARGET map_server_test_assets LABELS map_server map unit)
 
 # Which profiles a graph offers, and which it accepts -- the two answers that
 # used to come from different places and disagree. Recompiles graphs.cpp
@@ -107,7 +107,7 @@ target_link_libraries(map_server_test_graphs
         yaml-cpp::yaml-cpp
 )
 
-add_project_test(TARGET map_server_test_graphs LABELS map unit)
+add_project_test(TARGET map_server_test_graphs LABELS map_server map unit)
 
 # Which tile coordinates an archive could hold. Pure comparisons, no bus and no
 # archive -- and a test of its own because the dashboard's whole zoom behaviour
@@ -126,7 +126,7 @@ target_link_libraries(map_server_test_tile_range
         spdlog::spdlog
 )
 
-add_project_test(TARGET map_server_test_tile_range LABELS map unit)
+add_project_test(TARGET map_server_test_tile_range LABELS map_server map unit)
 
 # Which junctions a route search runs between. The departure heading was being
 # used to rank candidates and then discarded, so a vehicle pointing against its
@@ -146,7 +146,7 @@ target_link_libraries(map_server_test_route_endpoints
         spdlog::spdlog
 )
 
-add_project_test(TARGET map_server_test_route_endpoints LABELS map unit)
+add_project_test(TARGET map_server_test_route_endpoints LABELS map_server map unit)
 
 # Thinning a route's polyline. The properties worth pinning are structural --
 # the segment boundaries still line up and nothing moves further than the
@@ -166,7 +166,7 @@ target_link_libraries(map_server_test_route_geometry
         spdlog::spdlog
 )
 
-add_project_test(TARGET map_server_test_route_geometry LABELS map unit)
+add_project_test(TARGET map_server_test_route_geometry LABELS map_server map unit)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET map_server COMPONENT nodes)

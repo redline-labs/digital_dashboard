@@ -30,18 +30,18 @@ target_link_libraries(can_socketcan
 # The frame flag bits and the netlink message layout. No CAN interface needed,
 # which matters because the Linux socket code around them cannot be exercised
 # here at all.
-add_executable(can_socketcan_test
+add_executable(can_socketcan_test_frames
     tests/test_socketcan.cpp
 )
 
 # tests/golden/ holds a netlink reply captured from a real kernel; see the
 # header for how it was taken.
-target_include_directories(can_socketcan_test PRIVATE tests)
+target_include_directories(can_socketcan_test_frames PRIVATE tests)
 
-target_link_libraries(can_socketcan_test
+target_link_libraries(can_socketcan_test_frames
     PRIVATE
         can_socketcan
         spdlog::spdlog
 )
 
-add_project_test(TARGET can_socketcan_test LABELS can socketcan unit)
+add_project_test(TARGET can_socketcan_test_frames LABELS can_socketcan can socketcan unit)

@@ -13,11 +13,11 @@ target_link_libraries(core PRIVATE
     spdlog::spdlog
 )
 
-add_executable(core_test
+add_executable(core_test_paths
     tests/test_core.cpp
 )
-target_link_libraries(core_test PRIVATE
+target_link_libraries(core_test_paths PRIVATE
     core
     spdlog::spdlog
 )
-add_project_test(TARGET core_test LABELS core unit)
+add_project_test(TARGET core_test_paths LABELS core unit)

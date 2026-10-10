@@ -1,6 +1,7 @@
 #ifndef BAG_QUEUE_H_
 #define BAG_QUEUE_H_
 
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -27,6 +28,31 @@ struct QueuedMessage
     std::uint64_t log_time_ns = 0;
     std::optional<std::uint64_t> publish_time_ns;
 };
+
+// The message for one received sample, stamped with its arrival time NOW.
+//
+// Call it on the subscriber's thread, in the callback: a consumer that reads
+// the queue later and is backing up would otherwise fold its own latency into
+// every log_time, and the recording's timing would slew under load --
+// invisibly, because the result still looks like plausible data.
+//
+// `info` is anything with pub_sub::RawSubscriber::SampleInfo's fields; taken
+// generically so this library needs no bus.
+template <typename SampleInfo>
+QueuedMessage queuedFrom(const std::vector<std::uint8_t>& payload, const SampleInfo& info)
+{
+    QueuedMessage message;
+    message.log_time_ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+    message.key = std::string(info.keyexpr);
+    message.schema = std::string(info.schema_name);
+    message.origin_zid = std::string(info.origin_zid);
+    message.publish_time_ns = info.publish_time_nanos;
+    message.payload = payload;
+    return message;
+}
 
 // A bounded queue between the zenoh callbacks and the writer thread.
 //

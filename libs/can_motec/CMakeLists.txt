@@ -40,4 +40,4 @@ target_link_libraries(can_motec_test_gw
         spdlog::spdlog
 )
 
-add_project_test(TARGET can_motec_test_gw LABELS can motec unit)
+add_project_test(TARGET can_motec_test_gw LABELS can_motec can motec unit)

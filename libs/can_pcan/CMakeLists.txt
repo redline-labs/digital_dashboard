@@ -42,4 +42,4 @@ target_link_libraries(can_pcan_test_pucan
         spdlog::spdlog
 )
 
-add_project_test(TARGET can_pcan_test_pucan LABELS can pcan unit)
+add_project_test(TARGET can_pcan_test_pucan LABELS can_pcan can pcan unit)

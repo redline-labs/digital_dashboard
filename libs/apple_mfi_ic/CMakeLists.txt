@@ -36,12 +36,12 @@ target_link_libraries(apple_mfi_demo PRIVATE
 # sleeps come back late, and a host frozen for longer than a whole operation's
 # budget. Real time throughout; the default timeout catches a hang, since the test
 # itself asserts no durations.
-add_executable(apple_mfi_ic_test tests/test_apple_mfi_ic.cpp)
-target_link_libraries(apple_mfi_ic_test PRIVATE
+add_executable(apple_mfi_ic_test_retry tests/test_apple_mfi_ic.cpp)
+target_link_libraries(apple_mfi_ic_test_retry PRIVATE
     apple_mfi_ic
     spdlog::spdlog
 )
-add_project_test(TARGET apple_mfi_ic_test LABELS apple_mfi_ic unit)
+add_project_test(TARGET apple_mfi_ic_test_retry LABELS apple_mfi_ic unit)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET apple_mfi_demo COMPONENT nodes)

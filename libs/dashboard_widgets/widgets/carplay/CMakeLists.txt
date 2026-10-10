@@ -34,13 +34,13 @@ add_dashboard_widget(${CARPLAY_WIDGET_LIB}
 # When the return button shows: the whole truth table. Pure logic.
 add_executable(carplay_test_return_button_policy test_return_button_policy.cpp)
 target_include_directories(carplay_test_return_button_policy PRIVATE include)
-add_project_test(TARGET carplay_test_return_button_policy LABELS dashboard unit)
+add_project_test(TARGET carplay_test_return_button_policy LABELS carplay dashboard unit)
 
 # What the widget says while there is no picture, for every phase. Pure logic.
 add_executable(carplay_test_connect_status test_connect_status.cpp)
 target_include_directories(carplay_test_connect_status PRIVATE include)
 target_link_libraries(carplay_test_connect_status PRIVATE schemas)
-add_project_test(TARGET carplay_test_connect_status LABELS dashboard unit)
+add_project_test(TARGET carplay_test_connect_status LABELS carplay dashboard unit)
 
 # The same through a real widget, a real bus and a real H.264 frame: the text
 # follows the phase, and the picture goes with the phone or the driver.
@@ -50,7 +50,7 @@ target_link_libraries(carplay_test_session_display PRIVATE
     ${CARPLAY_WIDGET_LIB}
     spdlog::spdlog
 )
-add_project_test(TARGET carplay_test_session_display LABELS dashboard gui net)
+add_project_test(TARGET carplay_test_session_display LABELS carplay dashboard gui net)
 
 # The same through a real widget and a real bus: the button appears with no
 # session and goes once one is live, a tap sends one page command, and hiding the
@@ -60,7 +60,7 @@ target_link_libraries(carplay_test_return_button PRIVATE
     ${CARPLAY_WIDGET_LIB}
     spdlog::spdlog
 )
-add_project_test(TARGET carplay_test_return_button LABELS dashboard gui net)
+add_project_test(TARGET carplay_test_return_button LABELS carplay dashboard gui net)
 
 # Throttling policy on its own, with time injected: exact interval boundaries
 # and deferral state machine. No Qt, no zenoh, no threads, milliseconds to run.
@@ -69,7 +69,7 @@ target_link_libraries(carplay_test_touch_throttle PRIVATE
     helpers
     spdlog::spdlog
 )
-add_project_test(TARGET carplay_test_touch_throttle LABELS dashboard unit)
+add_project_test(TARGET carplay_test_touch_throttle LABELS carplay dashboard unit)
 target_include_directories(carplay_test_touch_throttle PRIVATE include)
 
 # Finger-to-slot assignment for multitouch: stable slots, a third finger
@@ -77,7 +77,7 @@ target_include_directories(carplay_test_touch_throttle PRIVATE include)
 add_executable(carplay_test_touch_slots test_touch_slots.cpp)
 target_link_libraries(carplay_test_touch_slots PRIVATE spdlog::spdlog)
 target_include_directories(carplay_test_touch_slots PRIVATE include)
-add_project_test(TARGET carplay_test_touch_slots LABELS dashboard unit)
+add_project_test(TARGET carplay_test_touch_slots LABELS carplay dashboard unit)
 
 # The same behaviour through a real widget and a real zenoh subscriber, which is
 # what proves the policy is actually wired to the timer and the publisher. Runs
@@ -89,7 +89,7 @@ target_link_libraries(carplay_test_touch_rate PRIVATE
 )
 # Drives a real widget and a real zenoh subscriber, and measures elapsed
 # wall clock -- so it is gui, net and slow all at once.
-add_project_test(TARGET carplay_test_touch_rate LABELS dashboard gui net slow)
+add_project_test(TARGET carplay_test_touch_rate LABELS carplay dashboard gui net slow)
 
 # Multitouch through a real widget, Qt's real touch delivery and a real zenoh
 # subscriber: a pinch, a third finger, the return button under a finger, and a
@@ -103,5 +103,5 @@ if(TARGET Qt6::Test)
         Qt6::Test
         spdlog::spdlog
     )
-    add_project_test(TARGET carplay_test_multitouch LABELS dashboard gui net)
+    add_project_test(TARGET carplay_test_multitouch LABELS carplay dashboard gui net)
 endif()

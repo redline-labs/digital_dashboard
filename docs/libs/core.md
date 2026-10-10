@@ -95,7 +95,7 @@ that declares a reporter.
 
 ## Tests
 
-`core_test` is labelled `core unit`. It covers `dataDir()` precedence, every
+`core_test_paths` is labelled `core unit`. It covers `dataDir()` precedence, every
 `expand()` rule, `executableDir()` and `resource()` against a real file in the
 checkout, the notification against a socket it opens itself, and the watchdog
 interval including the values that must disable it.

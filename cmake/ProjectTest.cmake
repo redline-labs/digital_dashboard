@@ -8,9 +8,8 @@
 # Targets are named <component>_test_<subject> throughout, so `ctest -N` reads
 # as a grouped list and `ctest -R <component>` selects one library's tests.
 #
-# Labels are how you pick a subset. Every test carries its component
-# (airplay, plist, iap2, apple_usb, pub_sub, canopen, dashboard,
-# dashboard_widgets, editor, scope, switchboard) plus at least
+# Labels are how you pick a subset. Every test carries its component -- the
+# part of its name before `_test_`, which this function checks -- plus at least
 # one of:
 #
 #   unit   pure logic. No sockets, no clock, no hardware, no display.
@@ -66,6 +65,28 @@ function(add_project_test)
 
     if(NOT PT_NAME)
         set(PT_NAME ${PT_TARGET})
+    endif()
+
+    # The conventions above, checked rather than hoped for: every test carries a
+    # tier, so `-L unit` really is every quick deterministic test, and the
+    # component its name starts with, so `-L <component>` finds all of them.
+    # Both had drifted -- widget tests labelled only `dashboard`, map_server's
+    # labelled `map`.
+    set(_tiers unit net gui slow)
+    set(_has_tier FALSE)
+    foreach(_tier IN LISTS _tiers)
+        if(_tier IN_LIST PT_LABELS)
+            set(_has_tier TRUE)
+        endif()
+    endforeach()
+    if(NOT _has_tier)
+        message(FATAL_ERROR "add_project_test(${PT_NAME}): LABELS needs one of unit, net, gui or slow")
+    endif()
+    if(NOT PT_NAME MATCHES "^([a-z0-9_]+)_test_[a-z0-9_]+$")
+        message(FATAL_ERROR "add_project_test(${PT_NAME}): name it <component>_test_<subject>")
+    endif()
+    if(NOT CMAKE_MATCH_1 IN_LIST PT_LABELS)
+        message(FATAL_ERROR "add_project_test(${PT_NAME}): LABELS must include its component, '${CMAKE_MATCH_1}'")
     endif()
 
     # Defined whether or not tests are built, so a test source compiles the same

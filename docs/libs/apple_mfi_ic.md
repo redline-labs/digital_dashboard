@@ -138,11 +138,11 @@ the iAP2 session and the AirPlay receiver's MFiSAP callbacks behind a mutex.
 ## Tests
 
 ```bash
-./build/libs/apple_mfi_ic/apple_mfi_ic_test
-ctest --test-dir build -R apple_mfi_ic_test
+./build/libs/apple_mfi_ic/apple_mfi_ic_test_retry
+ctest --test-dir build -R apple_mfi_ic_test_retry
 ```
 
-`apple_mfi_ic_test` is labelled `apple_mfi_ic` and `unit`. It needs no
+`apple_mfi_ic_test_retry` is labelled `apple_mfi_ic` and `unit`. It needs no
 hardware and runs on macOS, on the real clock.
 
 It drives `AppleMFIIC` against a fake coprocessor that reproduces the measured

@@ -99,10 +99,10 @@ state no longer does.
 ## Tests
 
 ```bash
-ctest --test-dir build -L socketcan    # can_socketcan_test
+ctest --test-dir build -L socketcan    # can_socketcan_test_frames
 ```
 
-`can_socketcan_test` is labelled `can`, `socketcan` and `unit`. On the frame
+`can_socketcan_test_frames` is labelled `can_socketcan`, `can`, `socketcan` and `unit`. On the frame
 side it round-trips classic, extended, error, FD and remote frames and rejects
 bad read sizes. On the netlink side it checks interface-name validation, the
 structure and rejections of a link request, the bit-timing encoding, ack

@@ -16,19 +16,6 @@
 namespace scope
 {
 
-namespace
-{
-
-std::uint64_t wallClockNanos()
-{
-    return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count());
-}
-
-}  // namespace
-
 struct ScopeRecorder::Impl
 {
     // DECLARED BEFORE the subscriber, so it is destroyed AFTER it. The
@@ -78,19 +65,7 @@ ScopeRecorder::ScopeRecorder(std::size_t max_bytes, double max_seconds) :
                   [impl](const std::vector<std::uint8_t>& payload,
                          const pub_sub::RawSubscriber::SampleInfo& info)
                   {
-                      // Taken HERE, not on whatever thread reads the buffer
-                      // later. A consumer that is backing up would otherwise
-                      // fold its own latency into every log_time, and the
-                      // capture's timing would slew under load -- invisibly,
-                      // because the result still looks like plausible data.
-                      bag::QueuedMessage message;
-                      message.log_time_ns = wallClockNanos();
-                      message.key = std::string(info.keyexpr);
-                      message.schema = std::string(info.schema_name);
-                      message.origin_zid = std::string(info.origin_zid);
-                      message.publish_time_ns = info.publish_time_nanos;
-                      message.payload = payload;
-
+                      bag::QueuedMessage message = bag::queuedFrom(payload, info);
                       ++impl->received;
 
                       // Copy in and return. This runs on a zenoh RX thread and

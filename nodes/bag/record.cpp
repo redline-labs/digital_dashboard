@@ -24,14 +24,6 @@ namespace bag_tool
 namespace
 {
 
-std::uint64_t wallClockNanos()
-{
-    return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count());
-}
-
 std::string humanBytes(double bytes)
 {
     if (bytes >= 1024.0 * 1024.0 * 1024.0)
@@ -159,18 +151,7 @@ int runRecord(cli::Context& context)
                      [&](const std::vector<std::uint8_t>& payload,
                          const pub_sub::RawSubscriber::SampleInfo& info)
                      {
-                         // Arrival time, taken here rather than on the writer
-                         // thread: a queue that is backing up would otherwise
-                         // fold its own latency into every log_time, and the
-                         // recording's timing would slew under load.
-                         bag::QueuedMessage message;
-                         message.log_time_ns = wallClockNanos();
-                         message.key = std::string(info.keyexpr);
-                         message.schema = std::string(info.schema_name);
-                         message.origin_zid = std::string(info.origin_zid);
-                         message.publish_time_ns = info.publish_time_nanos;
-                         message.payload = payload;
-
+                         bag::QueuedMessage message = bag::queuedFrom(payload, info);
                          bytes += payload.size();
                          ++received;
                          queue.push(std::move(message));
