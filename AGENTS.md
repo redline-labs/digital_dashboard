@@ -170,9 +170,10 @@ discovery seeing only live traffic, and what `accepted: false` and
   and without it changing a stack's `default_page` deletes every page. Widgets
   that can contain widgets are built through `dashboard::buildWidget()`. In the
   editor a stack's page widgets are live `SelectionFrame`s inside the stack's
-  frame, and page edits go through `Canvas::mutateDocument()` so they share the
-  undo diff; history snapshots carry page widget names beside the config for the
-  same reason they carry top-level names. See `docs/apps/dashboard/pages.md`.
+  frame, and page edits are functions of a history snapshot
+  (`editor/page_edits.h`, unit-tested on plain data) applied through
+  `Canvas::mutateDocument()`, so they share the undo diff; snapshots carry page
+  widget names beside the config for the same reason they carry top-level names. See `docs/apps/dashboard/pages.md`.
 - **The screen-handover messages are unconfirmed.** `changeModes` and
   car-to-phone `requestUI` live only in `libs/airplay/screen_modes.cpp`, with the
   evidence for each constant beside it, and `screen_handover.enabled` defaults

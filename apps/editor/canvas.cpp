@@ -1,9 +1,9 @@
 #include "editor/canvas.h"
 #include "editor/editor_constants.h"
+#include "editor/page_edits.h"
 #include "editor/selection_frame.h"
 
 #include "qt_helpers/widget_colors.h"
-#include "dashboard/page_command_walk.h"
 #include "dashboard/widget_identity.h"
 
 #include <QDragEnterEvent>
@@ -1009,39 +1009,6 @@ bool Canvas::mutateDocument(const std::function<bool(Snapshot&)>& change)
     return true;
 }
 
-namespace
-{
-
-// The window entry and the stack's position in it, inside a snapshot.
-widget_config_t* stackIn(EditorDocument::Snapshot& state, std::size_t window, std::size_t index)
-{
-    if (window >= state.doc.windows.size() || index >= state.doc.windows[window].widgets.size())
-    {
-        return nullptr;
-    }
-    widget_config_t& stack = state.doc.windows[window].widgets[index];
-    return stack.type() == widget_type_t::page_stack ? &stack : nullptr;
-}
-
-bool pageNameTaken(const widget_config_t& stack, const std::string& name)
-{
-    return std::any_of(stack.pages.begin(), stack.pages.end(),
-                       [&](const widget_page_t& page) { return page.name == name; });
-}
-
-// Every page command in a widget's config that targets `stack_id`, found by
-// type; see dashboard::forEachPageCommand.
-std::vector<page_command_t*> commandsIn(widget_config_t& widget, const std::string& stack_id)
-{
-    std::vector<page_command_t*> out;
-    dashboard::forEachPageCommand(widget, [&](page_command_t& command) {
-        if (command.target == stack_id) out.push_back(&command);
-    });
-    return out;
-}
-
-}  // namespace
-
 std::optional<std::size_t> Canvas::addPage(SelectionFrame* stack, std::string name)
 {
     const auto index = topLevelIndex(stack);
@@ -1049,34 +1016,11 @@ std::optional<std::size_t> Canvas::addPage(SelectionFrame* stack, std::string na
     {
         return std::nullopt;
     }
-
     std::optional<std::size_t> added;
-    mutateDocument([&](Snapshot& state)
-    {
-        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
-        if (cfg == nullptr)
-        {
-            return false;
-        }
-        if (name.empty())
-        {
-            for (std::size_t n = cfg->pages.size() + 1; name.empty() || pageNameTaken(*cfg, name); ++n)
-            {
-                name = "page_" + std::to_string(n);
-            }
-        }
-        else if (pageNameTaken(*cfg, name))
-        {
-            return false;
-        }
-        widget_page_t page;
-        page.name = name;
-        cfg->pages.push_back(std::move(page));
-        state.page_names[*index].push_back({});
-        added = cfg->pages.size() - 1;
-        return true;
+    mutateDocument([&](Snapshot& state) {
+        added = editor::page_edits::addPage(state, *index, std::move(name));
+        return added.has_value();
     });
-
     if (added)
     {
         showPage(stack, *added);
@@ -1087,106 +1031,21 @@ std::optional<std::size_t> Canvas::addPage(SelectionFrame* stack, std::string na
 bool Canvas::removePage(SelectionFrame* stack, std::size_t page)
 {
     const auto index = topLevelIndex(stack);
-    if (!index)
-    {
-        return false;
-    }
-    return mutateDocument([&](Snapshot& state)
-    {
-        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
-        if (cfg == nullptr || page >= cfg->pages.size() || cfg->pages.size() <= 1)
-        {
-            return false;
-        }
-        // A default that no longer exists would not load; the first page it is.
-        if (auto* stack_cfg = std::get_if<PageStackWidget::config_t>(&cfg->config);
-            stack_cfg && stack_cfg->default_page == cfg->pages[page].name)
-        {
-            stack_cfg->default_page.clear();
-        }
-        cfg->pages.erase(cfg->pages.begin() + static_cast<std::ptrdiff_t>(page));
-        auto& names = state.page_names[*index];
-        if (page < names.size())
-        {
-            names.erase(names.begin() + static_cast<std::ptrdiff_t>(page));
-        }
-        return true;
-    });
+    return index && mutateDocument([&](Snapshot& state) { return editor::page_edits::removePage(state, *index, page); });
 }
 
 bool Canvas::renamePage(SelectionFrame* stack, std::size_t page, const std::string& name)
 {
     const auto index = topLevelIndex(stack);
-    if (!index || name.empty())
-    {
-        return false;
-    }
-    return mutateDocument([&](Snapshot& state)
-    {
-        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
-        if (cfg == nullptr || page >= cfg->pages.size() || cfg->pages[page].name == name || pageNameTaken(*cfg, name))
-        {
-            return false;
-        }
-        const std::string old_name = cfg->pages[page].name;
-        const std::string stack_id = cfg->id;
-        cfg->pages[page].name = name;
-
-        // Everything that names the page by its old name would otherwise refuse
-        // to load: the stack's own default and triggers, and the buttons aimed
-        // at it from anywhere in the document.
-        if (auto* stack_cfg = std::get_if<PageStackWidget::config_t>(&cfg->config))
-        {
-            if (stack_cfg->default_page == old_name) stack_cfg->default_page = name;
-            for (page_trigger_t& trigger : stack_cfg->triggers)
-            {
-                if (trigger.page == old_name) trigger.page = name;
-            }
-        }
-        if (!stack_id.empty())
-        {
-            for (app_config_t& window : state.doc.windows)
-            {
-                for (widget_config_t& widget : window.widgets)
-                {
-                    for (page_command_t* command : commandsIn(widget, stack_id))
-                    {
-                        if (command->page == old_name) command->page = name;
-                    }
-                    for (widget_page_t& other : widget.pages)
-                    {
-                        for (widget_config_t& child : other.widgets)
-                        {
-                            for (page_command_t* command : commandsIn(child, stack_id))
-                            {
-                                if (command->page == old_name) command->page = name;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return true;
-    });
+    return index &&
+           mutateDocument([&](Snapshot& state) { return editor::page_edits::renamePage(state, *index, page, name); });
 }
 
 bool Canvas::setPageInCycle(SelectionFrame* stack, std::size_t page, bool in_cycle)
 {
     const auto index = topLevelIndex(stack);
-    if (!index)
-    {
-        return false;
-    }
-    return mutateDocument([&](Snapshot& state)
-    {
-        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
-        if (cfg == nullptr || page >= cfg->pages.size() || cfg->pages[page].in_cycle == in_cycle)
-        {
-            return false;
-        }
-        cfg->pages[page].in_cycle = in_cycle;
-        return true;
-    });
+    return index && mutateDocument(
+                        [&](Snapshot& state) { return editor::page_edits::setPageInCycle(state, *index, page, in_cycle); });
 }
 
 bool Canvas::movePage(SelectionFrame* stack, std::size_t from, std::size_t to)
@@ -1197,26 +1056,8 @@ bool Canvas::movePage(SelectionFrame* stack, std::size_t from, std::size_t to)
         return false;
     }
     const bool shown = stack->shownPage() == from;
-    const bool moved = mutateDocument([&](Snapshot& state)
-    {
-        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
-        if (cfg == nullptr || from >= cfg->pages.size() || to >= cfg->pages.size() || from == to)
-        {
-            return false;
-        }
-        const auto reorder = [from, to](auto& list)
-        {
-            auto item = std::move(list[from]);
-            list.erase(list.begin() + static_cast<std::ptrdiff_t>(from));
-            list.insert(list.begin() + static_cast<std::ptrdiff_t>(to), std::move(item));
-        };
-        reorder(cfg->pages);
-        if (state.page_names[*index].size() > std::max(from, to))
-        {
-            reorder(state.page_names[*index]);
-        }
-        return true;
-    });
+    const bool moved =
+        mutateDocument([&](Snapshot& state) { return editor::page_edits::movePage(state, *index, from, to); });
     if (moved && shown)
     {
         showPage(stack, to);
@@ -1229,26 +1070,12 @@ bool Canvas::moveToPage(SelectionFrame* child, std::size_t page)
     SelectionFrame* stack = child ? child->containerFrame() : nullptr;
     const auto index = stack ? topLevelIndex(stack) : std::nullopt;
     const auto where = stack ? stack->locateChild(child) : std::nullopt;
-    if (!index || !where || where->first == page)
+    if (!index || !where)
     {
         return false;
     }
-    const bool moved = mutateDocument([&](Snapshot& state)
-    {
-        widget_config_t* cfg = stackIn(state, activeWindow_, *index);
-        auto& names = state.page_names[*index];
-        if (cfg == nullptr || page >= cfg->pages.size() || where->first >= names.size() ||
-            where->second >= names[where->first].size())
-        {
-            return false;
-        }
-        auto& from_widgets = cfg->pages[where->first].widgets;
-        auto& from_names = names[where->first];
-        cfg->pages[page].widgets.push_back(from_widgets[where->second]);
-        names[page].push_back(from_names[where->second]);
-        from_widgets.erase(from_widgets.begin() + static_cast<std::ptrdiff_t>(where->second));
-        from_names.erase(from_names.begin() + static_cast<std::ptrdiff_t>(where->second));
-        return true;
+    const bool moved = mutateDocument([&](Snapshot& state) {
+        return editor::page_edits::moveWidgetToPage(state, *index, where->first, where->second, page);
     });
     if (moved)
     {

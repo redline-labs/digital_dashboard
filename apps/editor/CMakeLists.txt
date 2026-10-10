@@ -20,6 +20,7 @@ add_library(editor_core STATIC
     widget_palette.cpp
     canvas.cpp
     editor_document.cpp
+    page_edits.cpp
     properties_panel.cpp
     selection_frame.cpp
     editor_methods.cpp
@@ -84,6 +85,14 @@ add_executable(editor_test_document
 )
 target_link_libraries(editor_test_document PRIVATE editor_core)
 add_project_test(TARGET editor_test_document LABELS editor unit)
+
+# A page_stack's page edits on a plain document snapshot: renames that follow
+# every reference, the last page kept, refusals that change nothing.
+add_executable(editor_test_page_edits
+    tests/test_page_edits.cpp
+)
+target_link_libraries(editor_test_page_edits PRIVATE editor_core)
+add_project_test(TARGET editor_test_page_edits LABELS editor unit)
 
 # The editor's own load/edit/export path, above the codec. Constructs real
 # widgets, so it is a gui test and runs offscreen.
