@@ -377,6 +377,11 @@ std::vector<config_codec::Issue> validate_app_config(const YAML::Node& root);
 
 std::optional<dashboard_config_t> load_dashboard_config(const std::string& config_filepath);
 
+// Writes a layout, replacing the file whole or not at all: a truncated layout
+// is the one the car boots from. Returns why it failed, or nullopt.
+std::optional<std::string> save_dashboard_config(const dashboard_config_t& config,
+                                                 const std::string& config_filepath);
+
 
 
 #endif  // APP_CONFIG_H_

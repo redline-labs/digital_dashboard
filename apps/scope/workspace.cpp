@@ -5,8 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include <QSaveFile>
-#include <QString>
+#include "config_codec/config_file.h"
 
 #include <algorithm>
 #include <map>
@@ -271,29 +270,12 @@ bool save_workspace(const scope_workspace_t& workspace, const std::string& path)
 {
     try
     {
-        YAML::Emitter emitter;
-        emitter << YAML::convert<scope_workspace_t>::encode(workspace);
-
-        // QSaveFile: a temporary plus a rename, exactly as the settings codec
-        // writes. A plain ofstream that failed mid-write on a full disk left a
-        // TRUNCATED workspace behind -- and the workspace is the more valuable
-        // of the two files.
-        QSaveFile out(QString::fromStdString(path));
-        if (!out.open(QIODevice::WriteOnly | QIODevice::Text))
+        if (const std::optional<std::string> failed = config_codec::writeYamlFile(
+                YAML::convert<scope_workspace_t>::encode(workspace), path))
         {
-            SPDLOG_ERROR("Could not open '{}' for writing: {}", path,
-                         out.errorString().toStdString());
+            SPDLOG_ERROR("Could not save workspace '{}': {}", path, *failed);
             return false;
         }
-
-        const std::string text = std::string(emitter.c_str()) + "\n";
-        if (out.write(text.data(), static_cast<qint64>(text.size())) < 0 || !out.commit())
-        {
-            SPDLOG_ERROR("Failed while writing '{}': {}", path,
-                         out.errorString().toStdString());
-            return false;
-        }
-
         return true;
     }
     catch (const std::exception& e)

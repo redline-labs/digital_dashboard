@@ -28,8 +28,9 @@ target_link_libraries(config_codec INTERFACE
 )
 
 # Nested validate() hooks run once, children first, each note with its path.
-# String leaves (colour, keys) obey their rules in every codec.
-foreach(codec_test limits string_leaf)
+# String leaves (colour, keys) obey their rules in every codec. A config file is
+# replaced whole or not at all.
+foreach(codec_test limits string_leaf config_file)
     add_executable(config_codec_test_${codec_test} tests/test_${codec_test}.cpp)
     target_link_libraries(config_codec_test_${codec_test} PRIVATE config_codec)
     add_project_test(TARGET config_codec_test_${codec_test} LABELS config_codec unit)

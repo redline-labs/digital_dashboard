@@ -1,5 +1,6 @@
 #include "dashboard/app_config.h"
 
+#include "config_codec/config_file.h"
 #include "dashboard/page_command.h"
 #include "pub_sub/topic_key.h"
 
@@ -794,4 +795,17 @@ std::optional<dashboard_config_t> load_dashboard_config(const std::string& confi
     }
 
     return config;
+}
+std::optional<std::string> save_dashboard_config(const dashboard_config_t& config,
+                                                 const std::string& config_filepath)
+{
+    try
+    {
+        return config_codec::writeYamlFile(YAML::convert<dashboard_config_t>::encode(config),
+                                           config_filepath);
+    }
+    catch (const std::exception& e)
+    {
+        return std::string("could not encode the layout: ") + e.what();
+    }
 }

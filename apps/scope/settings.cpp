@@ -5,7 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QSaveFile>
+#include "config_codec/config_file.h"
 #include <QStandardPaths>
 #include <QString>
 
@@ -189,25 +189,12 @@ bool save_settings(const scope_settings_t& settings, const std::string& path)
 
     try
     {
-        YAML::Emitter emitter;
-        emitter << YAML::convert<scope_settings_t>::encode(settings);
-
-        // QSaveFile writes to a temporary and renames on commit, so a crash or
-        // a full disk leaves the previous file intact rather than a truncated
-        // one. Truncated reads back as "no tilesets", which is indistinguishable
-        // from a user who configured none.
-        QSaveFile out(qpath);
-        if (!out.open(QIODevice::WriteOnly | QIODevice::Text))
+        // Replaced whole or not at all: truncated reads back as "no tilesets",
+        // which is indistinguishable from a user who configured none.
+        if (const std::optional<std::string> failed = config_codec::writeYamlFile(
+                YAML::convert<scope_settings_t>::encode(settings), path))
         {
-            SPDLOG_ERROR("Could not open '{}' for writing: {}", path,
-                         out.errorString().toStdString());
-            return false;
-        }
-
-        const std::string text = std::string(emitter.c_str()) + "\n";
-        if (out.write(text.data(), static_cast<qint64>(text.size())) < 0 || !out.commit())
-        {
-            SPDLOG_ERROR("Failed while writing '{}': {}", path, out.errorString().toStdString());
+            SPDLOG_ERROR("Could not write settings '{}': {}", path, *failed);
             return false;
         }
 

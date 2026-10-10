@@ -23,8 +23,6 @@
 #include "spdlog/spdlog.h"
 #include "dashboard/app_config.h"
 
-#include <yaml-cpp/yaml.h>
-#include <fstream>
 
 EditorWindow::EditorWindow(QWidget* parent) :
   QMainWindow(parent),
@@ -335,43 +333,18 @@ bool EditorWindow::saveConfigTo(const QString& path)
     // in; see YAML::convert<dashboard_config_t>.
     const dashboard_config_t doc = canvas_->exportDocument();
 
-    try
+    if (const std::optional<std::string> failed = save_dashboard_config(doc, path.toStdString()))
     {
-        YAML::Node node = YAML::convert<dashboard_config_t>::encode(doc);
-        YAML::Emitter emitter;
-        emitter << node;
-
-        // Check the stream, both at open and after writing. This reported
-        // success unconditionally, so saving to a path the process cannot write
-        // showed "Saved config to ..." and dropped the layout on the floor.
-        std::ofstream ofs(path.toStdString());
-        if (!ofs)
-        {
-            SPDLOG_ERROR("Failed to open '{}' for writing.", path.toStdString());
-            statusBar()->showMessage(QString("Could not write %1").arg(path), 5000);
-            return false;
-        }
-
-        ofs << emitter.c_str();
-        ofs.close();
-        if (!ofs)
-        {
-            SPDLOG_ERROR("Failed to write '{}'.", path.toStdString());
-            statusBar()->showMessage(QString("Could not write %1").arg(path), 5000);
-            return false;
-        }
-
-        canvas_->markSaved();
-        updateHistoryUi();
-        statusBar()->showMessage(QString("Saved config to %1").arg(path), 3000);
-        SPDLOG_INFO("Saved dashboard config to: {}", path.toStdString());
-        return true;
-    }
-    catch (const std::exception& e)
-    {
-        SPDLOG_ERROR("Failed to save config: {}", e.what());
+        SPDLOG_ERROR("Could not save '{}': {}", path.toStdString(), *failed);
+        statusBar()->showMessage(QString("Could not write %1").arg(path), 5000);
         return false;
     }
+
+    canvas_->markSaved();
+    updateHistoryUi();
+    statusBar()->showMessage(QString("Saved config to %1").arg(path), 3000);
+    SPDLOG_INFO("Saved dashboard config to: {}", path.toStdString());
+    return true;
 }
 
 void EditorWindow::loadConfig()
