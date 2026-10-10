@@ -22,7 +22,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -30,6 +29,7 @@
 #include <vector>
 
 #include <cxxopts.hpp>
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -47,12 +47,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning { true };
 
-void handleSignal(int)
-{
-    gRunning.store(false);
-}
 
 using namespace mti610_node;
 using namespace std::chrono_literals;
@@ -413,8 +408,10 @@ int main(int argc, char** argv)
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("mti610");
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
+
 
     Publishers publishers(config.publish.topicPrefix, config.publish.publishUnknownItems);
 
@@ -477,8 +474,8 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    while (gRunning.load())
-    {
+    bool readerStopped = false;
+    cli::waitForInterrupt([&] {
         health.kick();
         const auto now = std::chrono::steady_clock::now();
 
@@ -510,15 +507,16 @@ int main(int argc, char** argv)
         if (!client.running())
         {
             SPDLOG_INFO("mti610: the reader stopped");
-            break;
+            readerStopped = true;
+            cli::requestStop();
         }
+    }, 50ms);
 
-        std::this_thread::sleep_for(50ms);
-    }
-
-    // Stop reading before tearing down the publishers the reader thread uses.
-    client.stop();
+    // Services first: a call still in flight would otherwise reach a stopped
+    // client. Then stop reading before tearing down the publishers the reader
+    // thread uses.
     services.reset();
+    client.stop();
 
     const mti610::StreamClient::Stats stats = client.stats();
     SPDLOG_INFO("mti610: {} bytes, {} data messages, {} items ({} unknown, {} malformed), "
@@ -527,5 +525,7 @@ int main(int argc, char** argv)
                 stats.malformedItems, stats.framer.resyncs, stats.framer.checksumErrors,
                 stats.deviceResets);
 
-    return 0;
+    // A replay that ran to its end is done; a live reader that stopped is a
+    // failure, and the exit code is what has systemd restart the unit.
+    return readerStopped && replayPath.empty() ? 1 : 0;
 }

@@ -20,7 +20,6 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,6 +27,7 @@
 #include <vector>
 
 #include <cxxopts.hpp>
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -44,12 +44,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning { true };
 
-void handleSignal(int)
-{
-    gRunning.store(false);
-}
 
 using namespace xpr_node;
 
@@ -237,8 +232,10 @@ int main(int argc, char** argv)
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("xpr");
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
+
 
     xpr::Radio radio(tcpFactory(config.radio), radioOptions(config));
     SharedState state;
@@ -262,7 +259,8 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    while (gRunning.load())
+    // radio.pump() is the wait: it returns on traffic or after 50 ms.
+    while (!cli::interrupted())
     {
         health.kick();
         // Collect whatever the radio has to say, and reconnect if it has

@@ -14,10 +14,10 @@
 
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <string>
 #include <thread>
 
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -33,12 +33,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning { true };
 
-void handleSignal(int)
-{
-    gRunning.store(false);
-}
 
 // Open the graph and say what is in it, without touching the bus. The fastest
 // way to find out whether a path is right -- the same idea as map_server's
@@ -159,8 +154,10 @@ int main(int argc, char** argv)
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("map_match");
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
+
 
     map_match::Services services(config, *graph);
 
@@ -173,8 +170,7 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    while (gRunning.load())
-    {
+    cli::waitForInterrupt([&] {
         health.kick();
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextStatus)
@@ -182,8 +178,7 @@ int main(int argc, char** argv)
             services.publishStatus();
             nextStatus = now + statusInterval;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    }, std::chrono::milliseconds(50));
 
     SPDLOG_INFO("[node] shutting down");
     return 0;

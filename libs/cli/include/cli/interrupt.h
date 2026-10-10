@@ -31,6 +31,12 @@ void installInterruptHandler();
 // forever, which is the right behaviour for one that exits on its own.
 bool interrupted();
 
+// Ends waitForInterrupt() from inside the process, as a signal would: for a
+// worker thread whose job is over (a pipeline that returned, a subscription
+// that could not be made) and wants the node to shut down and say why. Safe
+// from any thread. interrupted() is true afterwards.
+void requestStop();
+
 // A node's main loop: calls `tick` at once and then every `period` until SIGINT
 // or SIGTERM, and returns as soon as one arrives rather than at the end of the
 // period. Installs the handler if nothing has yet.

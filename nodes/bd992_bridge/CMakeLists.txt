@@ -19,6 +19,8 @@ add_executable(bd992_bridge
 
 target_link_libraries(bd992_bridge
     PRIVATE
+    
+    cli
     node_config
     core
         bd992

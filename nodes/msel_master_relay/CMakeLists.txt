@@ -14,6 +14,8 @@ add_executable(msel_master_relay
 )
 
 target_link_libraries(msel_master_relay PRIVATE
+    
+    cli
     node_config
     core
     spdlog::spdlog

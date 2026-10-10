@@ -16,6 +16,8 @@ target_include_directories(bd992_mock PRIVATE
 )
 
 target_link_libraries(bd992_mock PRIVATE
+    
+    cli
     node_config
     core
     # For road_graph/geometry.h -- the distance, bearing and 1e-7 fixed-point

@@ -19,6 +19,8 @@ add_executable(mti610_bridge
 
 target_link_libraries(mti610_bridge
     PRIVATE
+    
+    cli
     node_config
     core
         mti610

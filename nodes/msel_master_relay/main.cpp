@@ -43,6 +43,7 @@
 //     keeps flowing without a restart. Nothing else on the bus knows, which is
 //     why it is logged loudly.
 
+#include "cli/interrupt.h"
 #include "node_config.h"
 
 #include "msel/decoder.h"
@@ -66,7 +67,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -77,12 +77,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning { true };
 
-void onSignal(int)
-{
-    gRunning = false;
-}
 
 // --- enum translation -------------------------------------------------------
 //
@@ -316,6 +311,10 @@ int main(int argc, char** argv)
 
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("msel_master_relay");
+
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
 
     const std::string prefix = config.topicPrefix;
     pub_sub::ZenohPublisher<MselMasterRelayStatus> statusPublisher(prefix + "/status");
@@ -786,8 +785,6 @@ int main(int argc, char** argv)
             response.setWaitedMs(0u);
         });
 
-    std::signal(SIGINT, onSignal);
-    std::signal(SIGTERM, onSignal);
 
     SPDLOG_INFO("[node] decoding a Master Relay at base 0x{:X} ({:#X}/{:#X}/{:#X}) from '{}'",
                 config.baseAddress, config.baseAddress, config.baseAddress + 1u,
@@ -801,14 +798,11 @@ int main(int argc, char** argv)
     auto nextStatus = std::chrono::steady_clock::now();
     health.markReady();
 
-    while (gRunning)
-    {
+    cli::waitForInterrupt([&] {
         health.kick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
         if (config.statusIntervalMs == 0u)
         {
-            continue;
+            return;
         }
 
         const auto now = std::chrono::steady_clock::now();
@@ -822,7 +816,7 @@ int main(int argc, char** argv)
                 publishStatus(*last);
             }
         }
-    }
+    }, std::chrono::milliseconds(50));
 
     SPDLOG_INFO("[node] shutting down");
     return 0;

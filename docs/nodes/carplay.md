@@ -463,7 +463,7 @@ at once on any change:
 
 | Check | Not ok when |
 |---|---|
-| `usb` | USB bring-up did not complete (fault) |
+| `usb` | the USB pipeline could not run at all, e.g. no state directory (fault); a phone that fails a session is retried and reported through `session` |
 | `session` | never: it reports whether a session is recording or idle |
 
 `inspect health` prints them.

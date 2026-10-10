@@ -27,9 +27,10 @@ namespace carplay
 {
 
 // Runs the pipeline up to config.max_stage, logging each stage with the
-// prefixes docs/nodes/carplay.md greps for. Blocks until `stop` is set once
-// the requested stages have come up. Returns true if every attempted stage
-// succeeded.
+// prefixes docs/nodes/carplay.md greps for. Blocks until `stop` is set, and
+// returns true then: sessions that fail are retried, not reported here.
+// Returns false only when it cannot run at all (no state directory), and with
+// max_stage below 3, whether the switch to CarPlay worked.
 //
 // Every phone's progress through the stages, and the session once it is live,
 // is reported through `status`.

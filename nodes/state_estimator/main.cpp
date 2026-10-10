@@ -14,7 +14,6 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <csignal>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -22,6 +21,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/chrono.h>
@@ -44,12 +44,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning{true};
 
-void handleSignal(int)
-{
-    gRunning.store(false);
-}
 
 double hostNow()
 {
@@ -205,7 +200,7 @@ int replay(const state_estimator::NodeConfig& config, const std::string& path,
             seen = pipeline.estimator().status().keyframes;
             keeper->tick(pipeline.estimator());
         }
-        return gRunning.load();
+        return !cli::interrupted();
     });
     if (keeper) keeper->tick(pipeline.estimator(), true);
     outputs.status(pipeline.estimator().status(), keeper ? keeper->report() : state_estimator::CalibrationReport{});
@@ -257,8 +252,7 @@ int main(int argc, char** argv)
 
     // Before any publisher, so a tool watching the bus sees the node appear first.
     pub_sub::NodeIdentity identity("state_estimator");
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    cli::installInterruptHandler();
 
     if (args.count("replay"))
         return replay(config, args["replay"].as<std::string>(),
@@ -293,6 +287,9 @@ int main(int argc, char** argv)
         SPDLOG_WARN("gravity: {}", gravity.summary);
     health.setCheck("gravity", gravity.healthy ? node_health::State::ok : node_health::State::degraded, gravity.summary);
 
+    // Set once the main thread has been told to stop; the worker's own flag,
+    // because a signal handler may only write a sig_atomic_t.
+    std::atomic<bool> stop{false};
     std::thread worker([&] {
         state_estimator::Pipeline pipeline(config, gravity.model);
         Outputs outputs(config);
@@ -313,8 +310,12 @@ int main(int argc, char** argv)
         }
         calibrationHealth(health, keeper.report(), config.calibration.enabled);
         auto next_status = std::chrono::steady_clock::now();
-        while (gRunning.load())
+        while (!stop.load())
         {
+            // From here, not the main thread: the estimator is the work, and a
+            // main loop that only sleeps would feed the watchdog through a
+            // hung solve.
+            health.kick();
             for (auto& q : inbox.take(std::chrono::milliseconds(20)))
                 pipeline.onMessage(q.schema, q.payload, q.arrival);
             outputs.states(pipeline.advance(hostNow()));
@@ -351,18 +352,17 @@ int main(int argc, char** argv)
     // (joining any in-flight callback) before the inbox they push into.
     const auto imu_sub = subscribe(config.imuPrefix, imu_seen);
     const auto gnss_sub = subscribe(config.gnssPrefix, gnss_seen);
-    if (!imu_sub->isValid() || !gnss_sub->isValid())
+    const bool subscribed = imu_sub->isValid() && gnss_sub->isValid();
+    if (!subscribed)
     {
         SPDLOG_ERROR("could not subscribe");
-        gRunning.store(false);
+        cli::requestStop();
     }
 
     health.markReady();
-    while (gRunning.load())
-    {
-        health.kick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    cli::waitForInterrupt({});
+    stop.store(true);
     worker.join();
-    return 0;
+    // Non-zero so systemd's Restart=on-failure tries again.
+    return subscribed ? 0 : 1;
 }

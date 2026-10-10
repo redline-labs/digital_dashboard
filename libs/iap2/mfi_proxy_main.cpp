@@ -31,6 +31,7 @@
 // otherwise, and --token exists so that "otherwise" can at least require a
 // shared secret.
 
+#include "cli/interrupt.h"
 #include "iap2/mcp2221a_mfi_signer.h"
 
 #include "core/core.h"
@@ -39,11 +40,10 @@
 #include <spdlog/spdlog.h>
 #include <cxxopts.hpp>
 
-#include <atomic>
-#include <csignal>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -55,19 +55,6 @@ namespace
 // which is the same rule usb_pipeline follows in-process with the mutex it puts
 // in SessionContext, for the same reason.
 std::mutex g_chip_mutex;
-
-// Set so the signal handler can wake listen() up; httplib::Server::stop is
-// documented as safe from another thread.
-std::atomic<httplib::Server*> g_server{nullptr};
-
-void handleSignal(int)
-{
-    httplib::Server* server = g_server.load();
-    if (server != nullptr)
-    {
-        server->stop();
-    }
-}
 
 // A challenge is 20 bytes (SHA-1, protocol 2) or 32 (SHA-256, protocol 3).
 // Nothing legitimate is larger, and the cap keeps a stray POST from buffering.
@@ -215,9 +202,7 @@ int main(int argc, char** argv)
         setBytes(response, *signature);
     });
 
-    g_server.store(&server);
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    cli::installInterruptHandler();
 
     // Bind and listen as two steps so that "serving on" is only ever printed by
     // a process that actually holds the port.
@@ -230,20 +215,28 @@ int main(int argc, char** argv)
     if (!server.bind_to_port(bind_address, port))
     {
         SPDLOG_ERROR("[mfi] cannot bind {}:{}", bind_address, port);
-        g_server.store(nullptr);
         return 1;
     }
 
     SPDLOG_INFO("[mfi] serving on {}:{}{}", bind_address, port,
                 token.empty() ? "" : " (token required)");
-    if (!server.listen_after_bind())
+    // listen() on its own thread and stop() from this one: stop() takes locks
+    // and closes sockets, which a signal handler -- where it used to be called
+    // -- may not do. httplib documents it as safe from another thread.
+    bool listened = true;
+    std::thread listener([&] {
+        listened = server.listen_after_bind();
+        cli::requestStop();
+    });
+    cli::waitForInterrupt({});
+    server.stop();
+    listener.join();
+    if (!listened)
     {
         SPDLOG_ERROR("[mfi] listen on {}:{} failed", bind_address, port);
-        g_server.store(nullptr);
         return 1;
     }
 
-    g_server.store(nullptr);
     SPDLOG_INFO("[mfi] stopped");
     return 0;
 }

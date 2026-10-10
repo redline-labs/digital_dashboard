@@ -15,6 +15,7 @@
 //   --check       open every configured archive AND graph, report, exit
 //   (default)     serve
 
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -22,7 +23,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <map>
 #include <ctime>
 #include <string>
@@ -40,12 +40,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning { true };
 
-void handleSignal(int)
-{
-    gRunning.store(false);
-}
 
 using namespace map_server;
 
@@ -272,8 +267,10 @@ int main(int argc, char** argv)
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("map_server");
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
+
 
     TilesetRegistry tilesets(config.tilesets);
     if (tilesets.openCount() == 0)
@@ -324,8 +321,7 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    while (gRunning.load())
-    {
+    cli::waitForInterrupt([&] {
         health.kick();
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextStatus)
@@ -333,9 +329,7 @@ int main(int argc, char** argv)
             services.publishStatus();
             nextStatus = now + statusInterval;
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    }, std::chrono::milliseconds(50));
 
     SPDLOG_INFO("[node] shutting down");
     return 0;

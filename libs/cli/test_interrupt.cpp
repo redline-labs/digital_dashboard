@@ -106,6 +106,20 @@ bool anEmptyTickIsAllowed()
     return cli::interrupted();
 }
 
+// A worker that is done ends the node the way a signal would.
+bool requestStopFromAnotherThreadWakesTheWait()
+{
+    std::thread worker([] {
+        std::this_thread::sleep_for(100ms);
+        cli::requestStop();
+    });
+    const auto start = Clock::now();
+    cli::waitForInterrupt({}, 10s);
+    const auto elapsed = Clock::now() - start;
+    worker.join();
+    return cli::interrupted() && elapsed < 2s;
+}
+
 }  // namespace
 
 int main()
@@ -114,6 +128,8 @@ int main()
     inChild("tick runs once per period until the signal", ticksAtThePeriod);
     inChild("a signal before the wait returns without ticking", anEarlierSignalReturnsAtOnce);
     inChild("an empty tick is allowed", anEmptyTickIsAllowed);
+    inChild("requestStop() from a worker wakes the wait at once",
+            requestStopFromAnotherThreadWakesTheWait);
 
     std::fprintf(stderr, "%d failures\n", failures);
     return failures == 0 ? 0 : 1;

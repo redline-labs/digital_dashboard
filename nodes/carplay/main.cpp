@@ -10,6 +10,7 @@
 // USB pipeline is verified on a Linux host, --simulate exercises the whole
 // dashboard side without any hardware.
 
+#include "cli/interrupt.h"
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
 #include "zenoh_bridge.h"
@@ -28,21 +29,8 @@
 #include <memory>
 #include <sstream>
 #include <chrono>
-#include <csignal>
 #include <string>
 #include <thread>
-
-namespace
-{
-
-std::atomic<bool> g_stop{false};
-
-void handleSignal(int)
-{
-    g_stop.store(true);
-}
-
-}  // namespace
 
 int main(int argc, char** argv)
 {
@@ -96,8 +84,7 @@ int main(int argc, char** argv)
         spdlog::set_level(spdlog::level::debug);
     }
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    cli::installInterruptHandler();
 
     // Required. What the accessory tells the phone about itself -- its identity,
     // the panel's size, whether it drives on the left -- is not something to
@@ -159,28 +146,20 @@ int main(int argc, char** argv)
             }
         });
 
-        const bool ok = carplay::runSimulation(bridge, g_stop,
-                                               args["sim-width"].as<int>(),
-                                               args["sim-height"].as<int>(),
-                                               args["sim-fps"].as<int>());
+        std::atomic<bool> stop{false};
+        bool ok = true;
+        std::thread simulation([&] {
+            ok = carplay::runSimulation(bridge, stop, args["sim-width"].as<int>(),
+                                        args["sim-height"].as<int>(), args["sim-fps"].as<int>());
+            cli::requestStop();
+        });
+        health.setCheck("usb", node_health::State::ok, "simulated");
+        health.markReady();
+        cli::waitForInterrupt([&] { health.kick(); });
+        stop.store(true);
+        simulation.join();
         return ok ? 0 : 1;
     }
-
-    // Published on every change, and re-sent here once a second: zenoh keeps
-    // no last value, and a widget that hears nothing for a few seconds decides
-    // there is no driver.
-    carplay::SessionStatus status([&bridge](const carplay::SessionState& state) { bridge.publishSession(state); });
-    std::thread session_thread([&status, &health]() {
-        while (!g_stop.load())
-        {
-            // This thread is the node's heartbeat: the pipeline below blocks
-            // until the process is stopped.
-            health.kick();
-            health.setCheck("session", node_health::State::ok, carplay::phaseName(status.state().phase));
-            status.republish();
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
-    });
 
     config.max_stage = args["max-stage"].as<int>();
     config.state_dir = args["state-dir"].as<std::string>();
@@ -225,21 +204,40 @@ int main(int argc, char** argv)
         }
     }
 
+    // Published on every change, and re-sent once a second by the loop below:
+    // zenoh keeps no last value, and a widget that hears nothing for a few
+    // seconds decides there is no driver.
+    carplay::SessionStatus status([&bridge](const carplay::SessionState& state) { bridge.publishSession(state); });
+
+    // The pipeline on its own thread, so this one can wait for a signal. It
+    // returns when told to stop, or early when it cannot run at all.
+    std::atomic<bool> stop{false};
+    bool usb_ok = true;
+    std::thread pipeline([&] {
+        usb_ok = carplay::runUsbPipeline(config, bridge, stop, status);
+        cli::requestStop();
+    });
+
     health.markReady();
 
-    const bool usb_ok = carplay::runUsbPipeline(config, bridge, g_stop, status);
-    if (!usb_ok)
-    {
-        health.setCheck("usb", node_health::State::fault, "USB bring-up did not complete");
-        SPDLOG_ERROR("[node] USB bring-up did not complete -- see docs/nodes/carplay.md");
-    }
-
-    // Stages 5+ (iAP2/MFi, NCM, AirPlay) are not wired up yet; the pipeline
-    // holds the session open until interrupted.
-    g_stop.store(true);
-
-    session_thread.join();
+    // The watchdog is fed from here, not from the pipeline: the pipeline blocks
+    // for as long as a phone's trust prompt stays unanswered, and a watchdog
+    // fed only from it would restart the node in the middle of pairing.
+    cli::waitForInterrupt([&] {
+        health.kick();
+        health.setCheck("session", node_health::State::ok, carplay::phaseName(status.state().phase));
+        status.republish();
+    });
+    stop.store(true);
+    pipeline.join();
 
     SPDLOG_INFO("[node] shutting down");
+    if (!usb_ok)
+    {
+        health.setCheck("usb", node_health::State::fault, "the USB pipeline could not run");
+        SPDLOG_ERROR("[node] the USB pipeline could not run -- see docs/nodes/carplay.md");
+        // Non-zero, so systemd's Restart=on-failure tries again.
+        return 1;
+    }
     return 0;
 }

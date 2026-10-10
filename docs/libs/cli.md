@@ -108,6 +108,12 @@ the wake independent of which thread the kernel delivers the signal to, where
 `sigtimedwait()` would have needed SIGINT and SIGTERM blocked in every thread
 before zenoh started its own.
 
+`requestStop()` ends the wait from inside the process, from any thread: a worker
+whose job is over -- a pipeline that returned, a subscription that could not be
+made -- calls it, and the node shuts down the same way a signal would and
+returns whatever exit code it decides. A loop paced by something else (a CAN
+poll, a radio pump, a publish schedule) polls `interrupted()` instead.
+
 `applySessionOverrides()` runs before any verb, which is the only correct
 moment: `SessionManager` caches one session per process and `insertConfig()`
 affects the next session opened, so an override applied after a verb's first

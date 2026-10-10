@@ -26,6 +26,8 @@ add_executable(map_server
 
 target_link_libraries(map_server
     PRIVATE
+    
+    cli
     node_config
     core
         mbtiles

@@ -10,6 +10,8 @@ add_executable(grayhill_keypad
 
 target_link_libraries(grayhill_keypad
     PRIVATE
+    
+    cli
     core
         canopen_grayhill
         canopen

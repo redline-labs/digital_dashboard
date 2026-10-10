@@ -18,13 +18,13 @@
 
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <cxxopts.hpp>
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -41,12 +41,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning { true };
 
-void handleSignal(int)
-{
-    gRunning.store(false);
-}
 
 // "33.6866,-117.8558" -> two doubles. Returns false on anything else.
 bool parseLatLon(const std::string& text, double& latitudeDeg, double& longitudeDeg)
@@ -260,6 +255,10 @@ int main(int argc, char** argv)
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("bd992_mock");
 
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
+
     bd992_mock::Path path;
     bd992_mock::SourceReport report;
     bool built = false;
@@ -305,8 +304,6 @@ int main(int argc, char** argv)
 
     warnIfAlreadyPublished(config.publish.topicPrefix + "/gsof/lat_long_height");
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
 
     bd992_mock::Publishers publishers(config.publish);
 
@@ -338,7 +335,9 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    while (gRunning.load())
+    // Paced to nextTick rather than a fixed period, so it polls the flag; a
+    // signal is noticed within one tick.
+    while (!cli::interrupted())
     {
         health.kick();
         vehicle.step(dt);

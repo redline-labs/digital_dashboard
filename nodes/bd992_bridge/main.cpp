@@ -21,7 +21,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -29,6 +28,7 @@
 #include <vector>
 
 #include <cxxopts.hpp>
+#include "cli/interrupt.h"
 #include "core/core.h"
 #include <spdlog/spdlog.h>
 
@@ -47,12 +47,7 @@
 namespace
 {
 
-std::atomic<bool> gRunning { true };
 
-void handleSignal(int)
-{
-    gRunning.store(false);
-}
 
 using namespace bd992_node;
 
@@ -357,8 +352,10 @@ int main(int argc, char** argv)
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("bd992");
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
+
 
     Publishers publishers(config.publish.topicPrefix, config.publish.publishUnknownRecords);
 
@@ -449,8 +446,7 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    while (gRunning.load())
-    {
+    cli::waitForInterrupt([&] {
         health.kick();
         const auto now = std::chrono::steady_clock::now();
 
@@ -507,11 +503,9 @@ int main(int argc, char** argv)
         if (!replayPath.empty() && !loop && !stream.isRunning())
         {
             SPDLOG_INFO("bd992: replay finished");
-            break;
+            cli::requestStop();
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    }, std::chrono::milliseconds(50));
 
     SPDLOG_INFO("bd992: shutting down");
 

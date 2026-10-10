@@ -42,7 +42,9 @@ add_executable(state_estimator main.cpp)
 
 target_link_libraries(state_estimator
     PRIVATE
-        state_estimator_core
+        
+    cli
+    state_estimator_core
         core
         bag
         node_health

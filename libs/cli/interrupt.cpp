@@ -24,7 +24,7 @@ volatile std::sig_atomic_t g_interrupted = 0;
 volatile std::sig_atomic_t g_wake_read = -1;
 volatile std::sig_atomic_t g_wake_write = -1;
 
-extern "C" void handleInterrupt(int /*signum*/)
+void wake()
 {
     g_interrupted = 1;
     const int fd = g_wake_write;
@@ -37,6 +37,11 @@ extern "C" void handleInterrupt(int /*signum*/)
         [[maybe_unused]] const ssize_t written = ::write(fd, &byte, 1);
         errno = saved;
     }
+}
+
+extern "C" void handleInterrupt(int /*signum*/)
+{
+    wake();
 }
 
 void makeWakePipe()
@@ -57,18 +62,32 @@ void makeWakePipe()
     g_wake_write = fds[1];
 }
 
+// Once per process, whichever of the entry points gets there first.
+void ensureWakePipe()
+{
+    static std::once_flag pipe_once;
+    std::call_once(pipe_once, makeWakePipe);
+}
+
 }  // namespace
 
 void installInterruptHandler()
 {
     // Before the handlers, so a signal cannot find the pipe half made.
-    static std::once_flag pipe_once;
-    std::call_once(pipe_once, makeWakePipe);
+    ensureWakePipe();
 
     std::signal(SIGINT, handleInterrupt);
     // SIGTERM too: it is how systemd stops a unit, and a node that only handled
     // Ctrl-C was killed mid-write rather than shutting down.
     std::signal(SIGTERM, handleInterrupt);
+}
+
+void requestStop()
+{
+    // The pipe too, or a wait that started before this would sleep out its
+    // period first.
+    ensureWakePipe();
+    wake();
 }
 
 bool interrupted()

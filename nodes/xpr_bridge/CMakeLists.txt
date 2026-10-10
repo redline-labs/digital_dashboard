@@ -17,6 +17,8 @@ add_executable(xpr_bridge
 
 target_link_libraries(xpr_bridge
     PRIVATE
+    
+    cli
     node_config
     core
         xpr

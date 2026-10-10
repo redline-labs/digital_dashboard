@@ -23,6 +23,7 @@
 //     setting one blanked the other -- and zero is below what the indicator
 //     channel accepts, so it was also out of range.
 
+#include "cli/interrupt.h"
 #include "node_config.h"
 
 #include "canopen/nmt.h"
@@ -43,18 +44,12 @@
 #include <spdlog/spdlog.h>
 
 #include <atomic>
-#include <csignal>
 #include <string>
 
 namespace
 {
 
-std::atomic<bool> running { true };
 
-void handle_signal(int)
-{
-    running = false;
-}
 
 // The brightness the keypad was last told to use. RPDO2 carries both channels
 // in one frame, so a request about one channel has to say what the other one
@@ -124,8 +119,6 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::signal(SIGINT, handle_signal);
-    std::signal(SIGTERM, handle_signal);
 
     SPDLOG_INFO("[node] keypad at node {} on '{}' / '{}'", config.nodeId, config.rxKey,
                 config.txKey);
@@ -153,6 +146,10 @@ int main(int argc, char** argv)
 
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("grayhill_keypad");
+
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
 
     // --- what we publish ----------------------------------------------------
     pub_sub::ZenohPublisher<GrayhillButtons> buttonsPublisher(config.topicPrefix + "/buttons");
@@ -232,14 +229,14 @@ int main(int argc, char** argv)
     // Everything above declares a publisher or a subscriber. Sending before
     // peering is established loses the frames, so the startup sequence waits
     // rather than racing.
-    for (uint32_t elapsed = 0; elapsed < config.startupDelayMs && running; elapsed += 20)
+    for (uint32_t elapsed = 0; elapsed < config.startupDelayMs && !cli::interrupted(); elapsed += 20)
     {
         bus.poll(canopen::Duration { 20 });
     }
 
     Brightness brightness { config.indicatorBrightness, config.backlightBrightness };
 
-    if (config.driveNmt && running)
+    if (config.driveNmt && !cli::interrupted())
     {
         nmt.command(canopen::NmtCommand::EnterPreOperational, config.nodeId);
         bus.poll(canopen::Duration { 50 });
@@ -382,7 +379,9 @@ int main(int argc, char** argv)
 
     health.markReady();
 
-    while (running)
+    // bus.poll() is the wait: it returns on a frame or after 50 ms, and the
+    // flag is checked between.
+    while (!cli::interrupted())
     {
         health.kick();
         bus.poll(canopen::Duration { 50 });

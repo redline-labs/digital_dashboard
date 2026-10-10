@@ -10,6 +10,8 @@ add_executable(can_bridge
 
 target_link_libraries(can_bridge
     PRIVATE
+    
+    cli
     node_config
     core
         can

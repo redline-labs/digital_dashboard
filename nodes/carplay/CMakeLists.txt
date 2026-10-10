@@ -49,6 +49,8 @@ target_include_directories(carplay PRIVATE
 )
 
 target_link_libraries(carplay PRIVATE
+    
+    cli
     core
     node_health
     carplay_node_config

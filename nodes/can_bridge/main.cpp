@@ -23,6 +23,7 @@
 // vehicle should not both stop because one adapter was unplugged, and a bridge
 // that exits on the first problem is a bridge that has to be babysat.
 
+#include "cli/interrupt.h"
 #include "channel_health.h"
 #include "node_config.h"
 #include "trc_recorder.h"
@@ -46,7 +47,6 @@
 #include <spdlog/spdlog.h>
 
 #include <atomic>
-#include <csignal>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -55,12 +55,7 @@
 namespace
 {
 
-std::atomic<bool> running { true };
 
-void handle_signal(int)
-{
-    running = false;
-}
 
 CanBusState to_schema_state(can::BusState state)
 {
@@ -228,7 +223,7 @@ private:
         // wakeup and taking them one at a time turns a burst into a backlog.
         std::array<helpers::CanFrame, 64> batch;
 
-        while (pumping_ && running)
+        while (pumping_)
         {
             auto count = channel_->receive(batch, can::Duration { 100 });
             if (!count.has_value())
@@ -522,8 +517,10 @@ int main(int argc, char** argv)
     // One health topic per node, whatever it does: see libs/node_health.
     node_health::HealthReporter health("can_bridge");
 
-    std::signal(SIGINT, handle_signal);
-    std::signal(SIGTERM, handle_signal);
+    // Early, so a SIGTERM during setup still ends in an orderly shutdown and a
+    // final "stopping" health sample rather than the default action.
+    cli::installInterruptHandler();
+
 
     can::DefaultRegistryOptions registryOptions;
     registryOptions.pcan.detachKernelDriver = config.pcanDetachKernelDriver;
@@ -702,18 +699,15 @@ int main(int argc, char** argv)
     auto nextStatus = std::chrono::steady_clock::now();
     health.markReady();
 
-    while (running)
-    {
+    cli::waitForInterrupt([&] {
         health.kick();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
         const auto now = std::chrono::steady_clock::now();
         if (now >= nextStatus)
         {
             publishStatus();
             nextStatus = now + std::chrono::milliseconds(config.statusIntervalMs);
         }
-    }
+    }, std::chrono::milliseconds(50));
 
     // --- shutdown -----------------------------------------------------------
     //

@@ -54,9 +54,12 @@ its checks, name the things that have to keep happening, and call `markReady()`
 once the node is serving. `inspect health` then reports the node beside every
 other, and a monitor can tell a hung node from a stopped one. Run until
 `cli::waitForInterrupt()` returns rather than forever: SIGTERM is how a unit is
-stopped, and `kick()` in its tick is what feeds the systemd watchdog. It ticks
-once a second and sleeps in between, so an idle node costs one wakeup a second
-rather than ten.
+stopped, and `kick()` is what feeds the systemd watchdog. Kick from the thread
+that does the node's work: a main loop that only sleeps keeps the watchdog fed
+through a hung worker. A node whose work ends early, or fails, calls
+`cli::requestStop()` from that thread and returns non-zero, which is what has
+systemd's `Restart=on-failure` start it again. The wait ticks once a second and
+sleeps in between, so an idle node costs one wakeup a second rather than ten.
 
 A CAN decoder needs none of the above beyond its parser:
 `node_health::runCanDecoder(name, can_key, decode)` (`node_health/can_decoder.h`)

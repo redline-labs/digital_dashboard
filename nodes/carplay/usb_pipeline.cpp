@@ -1844,7 +1844,6 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
     // and plugged back in as many times as the user likes -- each replug starts
     // a fresh mux, socket, and iAP2 session, because none of that state
     // survives the re-enumeration.
-    bool ever_ok = false;
     ReattachBackoff backoff(kReattachDelay, kMaxReattachDelay, kStableSession);
     DevicePicker picker;
     while (!stop.load())
@@ -1868,7 +1867,6 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         if (const auto device = switchToCarPlay(*found))
         {
             outcome = runAttachedSession(*device, ctx, bridge, stop);
-            ever_ok |= outcome != AttachOutcome::kFailed;
         }
         if (stop.load())
         {
@@ -1916,11 +1914,14 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
         }
 
         SPDLOG_INFO("[node] session ended; waiting for a phone to be plugged in");
-        const auto retry_delay = std::chrono::duration_cast<std::chrono::seconds>(next.delay);
-        for (auto waited = std::chrono::seconds(0); waited < retry_delay && !stop.load();
-             waited += std::chrono::seconds(1))
+        // In slices, so a stop is noticed promptly -- and against a deadline
+        // rather than in whole seconds, which rounded any delay under one
+        // second down to no backoff at all.
+        const auto retry_at = std::chrono::steady_clock::now() + next.delay;
+        while (!stop.load() && std::chrono::steady_clock::now() < retry_at)
         {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(
+                std::chrono::milliseconds(250), retry_at - std::chrono::steady_clock::now()));
             // Unplugged while backing off: nothing is being retried any more.
             if (status.state().phase == SessionPhase::Error && !phoneAttached())
             {
@@ -1930,7 +1931,9 @@ bool runUsbPipeline(const NodeConfig& options, ZenohBridge& bridge, std::atomic<
     }
 
     SPDLOG_INFO("[node] USB pipeline stopped");
-    return ever_ok;
+    // Stopped because it was asked to. A phone that never arrived, or never
+    // completed a session, is a parked car rather than a failure.
+    return true;
 }
 
 }  // namespace carplay

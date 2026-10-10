@@ -36,6 +36,8 @@ target_link_libraries(iap2
 # image. Deliberately no redline_install.
 add_executable(mfi_proxy mfi_proxy_main.cpp)
 target_link_libraries(mfi_proxy PRIVATE
+    
+    cli
     iap2
     core
     httplib_wrapped
