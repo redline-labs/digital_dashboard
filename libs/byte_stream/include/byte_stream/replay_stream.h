@@ -2,19 +2,18 @@
 //
 // A ByteStream over a file of captured bytes.
 //
-// This is the `trc:` replay of the GNSS stack, and it exists for the same
-// reason: the whole decode path -- framing, resynchronisation, page assembly,
-// record parsing, schema conversion, publishing -- can then be exercised with
-// no receiver, no antenna and no sky. A minute of `--dump-gsof` from a vehicle
-// becomes a regression test that runs on a laptop.
+// The `trc:` replay of the device stacks, for the same reason: the whole decode
+// path -- framing, resynchronisation, parsing, schema conversion, publishing --
+// can then be exercised with no device. A minute of a node's `--dump` from a
+// vehicle becomes a regression test that runs on a laptop.
 //
 // The chunk size is deliberately configurable and deliberately small by
 // default. Handing the framer the whole file in one call would test a case
 // that never happens on a socket; handing it seven bytes at a time tests the
 // one that always does.
 
-#ifndef BD992_REPLAY_STREAM_H
-#define BD992_REPLAY_STREAM_H
+#ifndef BYTE_STREAM_REPLAY_STREAM_H
+#define BYTE_STREAM_REPLAY_STREAM_H
 
 #include <cstddef>
 #include <cstdint>
@@ -23,10 +22,10 @@
 #include <string>
 #include <vector>
 
-#include "bd992/byte_stream.h"
-#include "bd992/error.h"
+#include "byte_stream/byte_stream.h"
+#include "byte_stream/error.h"
 
-namespace bd992
+namespace byte_stream
 {
 
 class ReplayStream final : public ByteStream
@@ -34,8 +33,8 @@ class ReplayStream final : public ByteStream
   public:
     struct Options
     {
-        // Bytes handed over per recvSome(). A GSOF packet is up to 261 bytes,
-        // so the default splits most packets across several reads.
+        // Bytes handed over per recvSome(). Smaller than most packets (a GSOF
+        // packet is up to 261 bytes), so they are split across reads.
         std::size_t chunkSize { 64 };
 
         // Start again at the beginning when the file runs out, rather than
@@ -69,6 +68,6 @@ class ReplayStream final : public ByteStream
     bool mOpen { true };
 };
 
-} // namespace bd992
+} // namespace byte_stream
 
-#endif // BD992_REPLAY_STREAM_H
+#endif // BYTE_STREAM_REPLAY_STREAM_H

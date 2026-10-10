@@ -2,6 +2,8 @@
 
 #include "bd992/stream_client.h"
 
+#include "byte_stream/backoff.h"
+
 #include <array>
 
 #include <spdlog/spdlog.h>
@@ -147,11 +149,11 @@ void StreamClient::consume(std::span<const std::uint8_t> bytes)
 
 void StreamClient::run()
 {
-    std::size_t backoffIndex = 0;
+    byte_stream::Backoff backoff(mOptions.reconnectBackoff);
 
     while (!mStopping.load())
     {
-        Result<std::unique_ptr<ByteStream>> stream = mFactory();
+        Result<std::unique_ptr<byte_stream::ByteStream>> stream = mFactory();
 
         if (!stream.has_value() || *stream == nullptr)
         {
@@ -167,22 +169,12 @@ void StreamClient::run()
                 break;
             }
 
-            // Sleep in short slices so stop() is prompt. A five second backoff
-            // that cannot be interrupted makes shutdown take five seconds.
-            const std::chrono::milliseconds wait =
-                mOptions.reconnectBackoff[std::min(backoffIndex, mOptions.reconnectBackoff.size() - 1)];
-            ++backoffIndex;
-
-            for (std::chrono::milliseconds slept { 0 }; slept < wait && !mStopping.load();)
-            {
-                const std::chrono::milliseconds slice = std::min(std::chrono::milliseconds(50), wait - slept);
-                std::this_thread::sleep_for(slice);
-                slept += slice;
-            }
+            byte_stream::sleepWhile(backoff.failed(std::chrono::steady_clock::now()),
+                                    [this] { return !mStopping.load(); });
             continue;
         }
 
-        backoffIndex = 0;
+        backoff.connected(std::chrono::steady_clock::now());
 
         // Anything buffered came from the previous connection and cannot be
         // part of a packet that arrives on this one.
@@ -233,6 +225,11 @@ void StreamClient::run()
         {
             break;
         }
+
+        // A dropped connection waits too. Going straight back to the factory
+        // turned a receiver that accepts and then closes into a tight loop.
+        byte_stream::sleepWhile(backoff.failed(std::chrono::steady_clock::now()),
+                                    [this] { return !mStopping.load(); });
     }
 
     mRunning.store(false);

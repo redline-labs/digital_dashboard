@@ -16,6 +16,8 @@
 #include <expected>
 #include <string>
 
+#include "byte_stream/error.h"
+
 namespace bd992
 {
 
@@ -66,6 +68,8 @@ using Result = std::expected<T, Error>;
 // Shorthands, so the call sites read as the thing that went wrong rather than
 // as three lines of struct construction.
 std::unexpected<Error> not_found(std::string message);
+// A stream that could not be opened, in this library's terms.
+std::unexpected<Error> from_stream(const byte_stream::Error& error);
 std::unexpected<Error> connect_failed(std::string message, int code = 0);
 std::unexpected<Error> not_connected(std::string message);
 std::unexpected<Error> io_error(std::string message, int code = 0);

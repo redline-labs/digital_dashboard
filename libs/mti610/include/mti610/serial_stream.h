@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// A ByteStream over a serial port.
+// A byte_stream::ByteStream over a serial port.
 //
 // THIS IS THE FIRST SERIAL CODE IN THIS TREE. Every other device here speaks
 // TCP (bd992, xpr), libusb (can_pcan, can_motec, apple_usb), hidapi (mcp2221a)
@@ -36,7 +36,7 @@
 #include <span>
 #include <string>
 
-#include "mti610/byte_stream.h"
+#include "byte_stream/byte_stream.h"
 #include "mti610/error.h"
 
 namespace mti610
@@ -52,7 +52,7 @@ namespace mti610
 // 115200 is the factory default in serial mode.
 bool is_supported_baud(unsigned baud);
 
-class SerialStream final : public ByteStream
+class SerialStream final : public byte_stream::ByteStream
 {
   public:
     struct Options
@@ -98,7 +98,7 @@ class SerialStream final : public ByteStream
 
 // For tests: wrap a file descriptor this class did not open, such as one end
 // of a pty pair. Takes ownership.
-std::unique_ptr<ByteStream> adopt_fd(int fd, std::string label);
+std::unique_ptr<byte_stream::ByteStream> adopt_fd(int fd, std::string label);
 
 } // namespace mti610
 

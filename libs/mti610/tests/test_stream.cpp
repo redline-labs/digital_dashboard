@@ -25,7 +25,7 @@
 // libs/xpr's fake radio makes.
 
 #include "mti610/device_session.h"
-#include "mti610/replay_stream.h"
+#include "byte_stream/replay_stream.h"
 #include "mti610/serial_stream.h"
 #include "mti610/stream_client.h"
 #include "xbus/commands.h"
@@ -563,7 +563,7 @@ void testHandshakeAgainstAScriptedDevice()
 
     const int fd = device.hostFd();
     mti610::StreamClient client(
-        [fd]() -> mti610::Result<std::unique_ptr<mti610::ByteStream>> {
+        [fd]() -> mti610::Result<std::unique_ptr<byte_stream::ByteStream>> {
             return mti610::adopt_fd(::dup(fd), "pty");
         },
         options,
@@ -637,7 +637,7 @@ void testDeviceThatNeverAnswersTimesOutRatherThanHanging()
 
     const int fd = device.hostFd();
     mti610::StreamClient client(
-        [fd]() -> mti610::Result<std::unique_ptr<mti610::ByteStream>> {
+        [fd]() -> mti610::Result<std::unique_ptr<byte_stream::ByteStream>> {
             return mti610::adopt_fd(::dup(fd), "pty");
         },
         options, [](const xbus::MessageView&) {});
@@ -675,7 +675,7 @@ void testDeviceResetIsNoticedAndRecovered()
 
     const int fd = device.hostFd();
     mti610::StreamClient client(
-        [fd]() -> mti610::Result<std::unique_ptr<mti610::ByteStream>> {
+        [fd]() -> mti610::Result<std::unique_ptr<byte_stream::ByteStream>> {
             return mti610::adopt_fd(::dup(fd), "pty");
         },
         options, [](const xbus::MessageView&) {});
@@ -712,7 +712,7 @@ void testRefusedWriteIsReportedNotRetriedForever()
     if (!device.valid()) { return; }
 
     const int fd = ::dup(device.hostFd());
-    std::unique_ptr<mti610::ByteStream> stream = mti610::adopt_fd(fd, "pty");
+    std::unique_ptr<byte_stream::ByteStream> stream = mti610::adopt_fd(fd, "pty");
 
     xbus::Framer framer;
     mti610::DeviceSession session(*stream, framer,
@@ -745,7 +745,7 @@ void testDeviceClampsRatherThanRefuses()
     if (!device.valid()) { return; }
 
     const int fd = ::dup(device.hostFd());
-    std::unique_ptr<mti610::ByteStream> stream = mti610::adopt_fd(fd, "pty");
+    std::unique_ptr<byte_stream::ByteStream> stream = mti610::adopt_fd(fd, "pty");
 
     xbus::Framer framer;
     mti610::DeviceSession session(*stream, framer,
@@ -797,8 +797,8 @@ void testReplayStream()
 
     auto bytes = capture;
     mti610::StreamClient client(
-        [bytes]() -> mti610::Result<std::unique_ptr<mti610::ByteStream>> {
-            return mti610::ReplayStream::fromBytes(
+        [bytes]() -> mti610::Result<std::unique_ptr<byte_stream::ByteStream>> {
+            return byte_stream::ReplayStream::fromBytes(
                 bytes, { .chunkSize = 3, .loop = false, .chunkDelayMs = 0 });
         },
         options, [&](const xbus::MessageView&) { ++seen; });
@@ -816,13 +816,13 @@ void testReplayRejectsAnEmptyCapture()
     const char* tmp = "/tmp/mti610_empty_capture.bin";
     { std::ofstream(tmp).close(); }
 
-    const mti610::Result<std::unique_ptr<mti610::ReplayStream>> replay =
-        mti610::ReplayStream::open(tmp, {});
+    const auto replay =
+        byte_stream::ReplayStream::open(tmp, {});
     check(!replay.has_value(), "an empty capture is refused");
     ::unlink(tmp);
 
-    const mti610::Result<std::unique_ptr<mti610::ReplayStream>> missing =
-        mti610::ReplayStream::open("/tmp/mti610-no-such-capture.bin", {});
+    const auto missing =
+        byte_stream::ReplayStream::open("/tmp/mti610-no-such-capture.bin", {});
     check(!missing.has_value(), "and so is a missing one");
 }
 

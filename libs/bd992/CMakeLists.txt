@@ -17,15 +17,14 @@ add_library(bd992 STATIC
     src/control_client.cpp
     src/error.cpp
     src/output_config.cpp
-    src/replay_stream.cpp
     src/stream_client.cpp
-    src/tcp_stream.cpp
 )
 
 target_include_directories(bd992 PUBLIC include)
 
 target_link_libraries(bd992
     PUBLIC
+        byte_stream
         gsof
     PRIVATE
         spdlog::spdlog

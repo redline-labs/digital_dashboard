@@ -20,13 +20,13 @@ add_library(xpr STATIC
     src/data_services.cpp
     src/error.cpp
     src/radio.cpp
-    src/tcp_stream.cpp
 )
 
 target_include_directories(xpr PUBLIC include)
 
 target_link_libraries(xpr
     PUBLIC
+        byte_stream
         mototrbo
     PRIVATE
         spdlog::spdlog

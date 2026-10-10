@@ -22,7 +22,6 @@ add_library(mti610 STATIC
     src/device_session.cpp
     src/error.cpp
     src/output_config.cpp
-    src/replay_stream.cpp
     src/serial_stream.cpp
     src/stream_client.cpp
 )
@@ -31,6 +30,7 @@ target_include_directories(mti610 PUBLIC include)
 
 target_link_libraries(mti610
     PUBLIC
+        byte_stream
         xbus
     PRIVATE
         spdlog::spdlog

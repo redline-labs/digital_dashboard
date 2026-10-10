@@ -83,10 +83,10 @@ const BaudEntry* findBaud(unsigned baud)
     return nullptr;
 }
 
-// A ByteStream over a descriptor this library did not open. Used by the tests
+// A byte_stream::ByteStream over a descriptor this library did not open. Used by the tests
 // to drive a pty, and deliberately not exposed as a way to hand SerialStream a
 // socket -- the termios setup is half of what SerialStream is for.
-class AdoptedFd final : public ByteStream
+class AdoptedFd final : public byte_stream::ByteStream
 {
   public:
     AdoptedFd(int fd, std::string label) : mFd(fd), mLabel(std::move(label)) {}
@@ -400,7 +400,7 @@ void SerialStream::close()
     }
 }
 
-std::unique_ptr<ByteStream> adopt_fd(int fd, std::string label)
+std::unique_ptr<byte_stream::ByteStream> adopt_fd(int fd, std::string label)
 {
     return std::make_unique<AdoptedFd>(fd, std::move(label));
 }

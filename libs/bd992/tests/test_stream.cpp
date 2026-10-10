@@ -15,9 +15,9 @@
 
 #include "bd992/control_client.h"
 #include "bd992/output_config.h"
-#include "bd992/replay_stream.h"
+#include "byte_stream/replay_stream.h"
 #include "bd992/stream_client.h"
-#include "bd992/tcp_stream.h"
+#include "byte_stream/tcp_stream.h"
 #include "gsof/commands.h"
 #include "gsof/records.h"
 #include "gsof/trimcomm.h"
@@ -230,13 +230,13 @@ bool waitFor(Predicate predicate, std::chrono::milliseconds limit = 5000ms)
 
 StreamClient::StreamFactory tcpFactory(std::uint16_t port)
 {
-    return [port]() -> Result<std::unique_ptr<ByteStream>> {
-        Result<std::unique_ptr<TcpStream>> stream = TcpStream::connect("127.0.0.1", port, 1000ms);
+    return [port]() -> Result<std::unique_ptr<byte_stream::ByteStream>> {
+        auto stream = byte_stream::TcpStream::connect("127.0.0.1", port, 1000ms);
         if (!stream.has_value())
         {
-            return std::unexpected(stream.error());
+            return bd992::from_stream(stream.error());
         }
-        return std::unique_ptr<ByteStream>(std::move(*stream));
+        return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
     };
 }
 
@@ -306,6 +306,33 @@ void test_records_arrive_over_a_real_socket()
     check(stats.records >= 20, "the record count matches what was delivered");
     check(stats.framer.checksumErrors == 0, "no checksum errors on a clean stream");
     check(stats.framer.resyncs == 0, "and no resynchronisation");
+}
+
+void test_a_peer_that_hangs_up_at_once_is_not_hammered()
+{
+    // Accepts and closes straight away, every time -- a receiver that is busy,
+    // or a port forward with nothing behind it. Every connect "succeeds", and
+    // resetting the backoff on connect used to reconnect it in a tight loop.
+    MockReceiver receiver([](int) {});
+    check(receiver.ok(), "the mock receiver bound a port");
+    if (!receiver.ok())
+    {
+        return;
+    }
+
+    StreamClient::Options options;
+    options.reconnectBackoff = { 100ms, 200ms, 400ms };
+
+    StreamClient client(tcpFactory(receiver.port()), options, [](const gsof::RawRecord&) {});
+    client.start();
+    std::this_thread::sleep_for(1000ms);
+    client.stop();
+
+    // 0 + 100 + 200 + 400 + 400 ms: about five connections in a second. With
+    // no wait it was hundreds.
+    check(receiver.connections() >= 2, "it does retry");
+    check(receiver.connections() <= 8,
+          "but waits between attempts (" + std::to_string(receiver.connections()) + " in 1 s)");
 }
 
 void test_a_dropped_connection_is_reconnected()
@@ -410,12 +437,12 @@ void test_replay_drives_the_same_pipeline()
     StreamClient::Options options;
     options.stopWhenStreamEnds = true;
 
-    ReplayStream::Options replayOptions;
+    byte_stream::ReplayStream::Options replayOptions;
     replayOptions.chunkSize = 5;
 
     StreamClient client(
-        [&stream, replayOptions]() -> Result<std::unique_ptr<ByteStream>> {
-            return std::unique_ptr<ByteStream>(ReplayStream::fromBytes(stream, replayOptions));
+        [&stream, replayOptions]() -> Result<std::unique_ptr<byte_stream::ByteStream>> {
+            return std::unique_ptr<byte_stream::ByteStream>(byte_stream::ReplayStream::fromBytes(stream, replayOptions));
         },
         options, [&records](const gsof::RawRecord&) { ++records; });
 
@@ -436,13 +463,13 @@ void test_replay_loops_when_asked()
 
     std::atomic<int> records { 0 };
 
-    ReplayStream::Options replayOptions;
+    byte_stream::ReplayStream::Options replayOptions;
     replayOptions.loop = true;
     replayOptions.chunkSize = 16;
 
     StreamClient client(
-        [&stream, replayOptions]() -> Result<std::unique_ptr<ByteStream>> {
-            return std::unique_ptr<ByteStream>(ReplayStream::fromBytes(stream, replayOptions));
+        [&stream, replayOptions]() -> Result<std::unique_ptr<byte_stream::ByteStream>> {
+            return std::unique_ptr<byte_stream::ByteStream>(byte_stream::ReplayStream::fromBytes(stream, replayOptions));
         },
         StreamClient::Options {}, [&records](const gsof::RawRecord&) { ++records; });
 
@@ -485,13 +512,13 @@ std::vector<std::uint8_t> applicationFileReply(std::uint8_t deviceType)
 
 ControlClient::StreamFactory controlFactory(std::uint16_t port)
 {
-    return [port]() -> Result<std::unique_ptr<ByteStream>> {
-        Result<std::unique_ptr<TcpStream>> stream = TcpStream::connect("127.0.0.1", port, 1000ms);
+    return [port]() -> Result<std::unique_ptr<byte_stream::ByteStream>> {
+        auto stream = byte_stream::TcpStream::connect("127.0.0.1", port, 1000ms);
         if (!stream.has_value())
         {
-            return std::unexpected(stream.error());
+            return bd992::from_stream(stream.error());
         }
-        return std::unique_ptr<ByteStream>(std::move(*stream));
+        return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
     };
 }
 
@@ -629,7 +656,7 @@ void test_raw_commands_are_gated()
     options.allowRawCommands = false;
 
     ControlClient control(
-        []() -> Result<std::unique_ptr<ByteStream>> { return not_connected("no receiver in this test"); },
+        []() -> Result<std::unique_ptr<byte_stream::ByteStream>> { return not_connected("no receiver in this test"); },
         options);
 
     const Result<ControlClient::Reply> reply = control.sendRaw(0x6F, {});
@@ -641,7 +668,7 @@ void test_raw_commands_are_gated()
 void test_an_empty_write_is_refused()
 {
     ControlClient control(
-        []() -> Result<std::unique_ptr<ByteStream>> { return not_connected("no receiver in this test"); },
+        []() -> Result<std::unique_ptr<byte_stream::ByteStream>> { return not_connected("no receiver in this test"); },
         ControlClient::Options {});
 
     const Result<void> written = control.writeApplicationFile({});
@@ -658,6 +685,7 @@ int main()
 
     test_records_arrive_over_a_real_socket();
     test_a_dropped_connection_is_reconnected();
+    test_a_peer_that_hangs_up_at_once_is_not_hammered();
     test_a_receiver_that_is_not_listening_is_retried_not_fatal();
     test_replay_drives_the_same_pipeline();
     test_replay_loops_when_asked();

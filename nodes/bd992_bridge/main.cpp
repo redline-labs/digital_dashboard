@@ -33,9 +33,9 @@
 #include <spdlog/spdlog.h>
 
 #include "bd992/control_client.h"
-#include "bd992/replay_stream.h"
+#include "byte_stream/replay_stream.h"
 #include "bd992/stream_client.h"
-#include "bd992/tcp_stream.h"
+#include "byte_stream/tcp_stream.h"
 #include "bd992.capnp.h"
 #include "node_config.h"
 #include "publishers.h"
@@ -55,15 +55,15 @@ bd992::StreamClient::StreamFactory tcpFactory(const ReceiverConfig& receiver, st
 {
     return [host = receiver.host, port,
             timeout = std::chrono::milliseconds(receiver.connectTimeoutMs)]()
-               -> bd992::Result<std::unique_ptr<bd992::ByteStream>> {
-        bd992::Result<std::unique_ptr<bd992::TcpStream>> stream =
-            bd992::TcpStream::connect(host, port, timeout);
+               -> bd992::Result<std::unique_ptr<byte_stream::ByteStream>> {
+        auto stream =
+            byte_stream::TcpStream::connect(host, port, timeout);
         if (!stream.has_value())
         {
-            return std::unexpected(stream.error());
+            return bd992::from_stream(stream.error());
         }
         SPDLOG_INFO("bd992: connected to {}", (*stream)->peer());
-        return std::unique_ptr<bd992::ByteStream>(std::move(*stream));
+        return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
     };
 }
 
@@ -116,15 +116,15 @@ void printOutputs(const gsof::appfile::ApplicationFile& file)
 int runProbe(const NodeConfig& config)
 {
     bd992::ControlClient control(
-        [&config]() -> bd992::Result<std::unique_ptr<bd992::ByteStream>> {
-            bd992::Result<std::unique_ptr<bd992::TcpStream>> stream = bd992::TcpStream::connect(
+        [&config]() -> bd992::Result<std::unique_ptr<byte_stream::ByteStream>> {
+            auto stream = byte_stream::TcpStream::connect(
                 config.receiver.host, config.receiver.controlPort,
                 std::chrono::milliseconds(config.receiver.connectTimeoutMs));
             if (!stream.has_value())
             {
-                return std::unexpected(stream.error());
+                return bd992::from_stream(stream.error());
             }
-            return std::unique_ptr<bd992::ByteStream>(std::move(*stream));
+            return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
         },
         controlOptions(config));
 
@@ -171,15 +171,15 @@ int runProbe(const NodeConfig& config)
 int runCheck(const NodeConfig& config)
 {
     bd992::ControlClient control(
-        [&config]() -> bd992::Result<std::unique_ptr<bd992::ByteStream>> {
-            bd992::Result<std::unique_ptr<bd992::TcpStream>> stream = bd992::TcpStream::connect(
+        [&config]() -> bd992::Result<std::unique_ptr<byte_stream::ByteStream>> {
+            auto stream = byte_stream::TcpStream::connect(
                 config.receiver.host, config.receiver.controlPort,
                 std::chrono::milliseconds(config.receiver.connectTimeoutMs));
             if (!stream.has_value())
             {
-                return std::unexpected(stream.error());
+                return bd992::from_stream(stream.error());
             }
-            return std::unique_ptr<bd992::ByteStream>(std::move(*stream));
+            return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
         },
         controlOptions(config));
 
@@ -366,21 +366,21 @@ int main(int argc, char** argv)
 
     if (!replayPath.empty())
     {
-        bd992::ReplayStream::Options replayOptions;
+        byte_stream::ReplayStream::Options replayOptions;
         replayOptions.loop = loop;
         // Small chunks on purpose: a capture handed over in one piece would
         // exercise a case that never happens on a socket.
         replayOptions.chunkSize = 128;
         replayOptions.chunkDelayMs = replayDelayMs;
 
-        factory = [replayPath, replayOptions]() -> bd992::Result<std::unique_ptr<bd992::ByteStream>> {
-            bd992::Result<std::unique_ptr<bd992::ReplayStream>> stream =
-                bd992::ReplayStream::open(replayPath, replayOptions);
+        factory = [replayPath, replayOptions]() -> bd992::Result<std::unique_ptr<byte_stream::ByteStream>> {
+            auto stream =
+                byte_stream::ReplayStream::open(replayPath, replayOptions);
             if (!stream.has_value())
             {
-                return std::unexpected(stream.error());
+                return bd992::from_stream(stream.error());
             }
-            return std::unique_ptr<bd992::ByteStream>(std::move(*stream));
+            return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
         };
         options.stopWhenStreamEnds = !loop;
 

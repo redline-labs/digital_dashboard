@@ -34,7 +34,7 @@
 #include <spdlog/spdlog.h>
 
 #include "mti610.capnp.h"
-#include "mti610/replay_stream.h"
+#include "byte_stream/replay_stream.h"
 #include "mti610/serial_stream.h"
 #include "mti610/stream_client.h"
 #include "node_config.h"
@@ -55,7 +55,7 @@ using namespace std::chrono_literals;
 mti610::StreamClient::StreamFactory serialFactory(const DeviceConfig& device)
 {
     return [port = device.port, baud = device.baud, timeout = device.openTimeoutMs]()
-               -> mti610::Result<std::unique_ptr<mti610::ByteStream>> {
+               -> mti610::Result<std::unique_ptr<byte_stream::ByteStream>> {
         mti610::Result<std::unique_ptr<mti610::SerialStream>> stream =
             mti610::SerialStream::open(port, { .baud = baud, .openTimeoutMs = timeout });
 
@@ -64,15 +64,15 @@ mti610::StreamClient::StreamFactory serialFactory(const DeviceConfig& device)
             return std::unexpected(stream.error());
         }
 
-        return std::unique_ptr<mti610::ByteStream>(std::move(*stream));
+        return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
     };
 }
 
 mti610::StreamClient::StreamFactory replayFactory(const std::string& path, bool loop)
 {
-    return [path, loop]() -> mti610::Result<std::unique_ptr<mti610::ByteStream>> {
-        mti610::Result<std::unique_ptr<mti610::ReplayStream>> stream =
-            mti610::ReplayStream::open(path, { .chunkSize = 64,
+    return [path, loop]() -> mti610::Result<std::unique_ptr<byte_stream::ByteStream>> {
+        auto stream =
+            byte_stream::ReplayStream::open(path, { .chunkSize = 64,
                                                .loop = loop,
                                                // Paced roughly like a 115200
                                                // link, so a dashboard watching
@@ -82,11 +82,11 @@ mti610::StreamClient::StreamFactory replayFactory(const std::string& path, bool 
 
         if (!stream.has_value())
         {
-            return std::unexpected(stream.error());
+            return mti610::from_stream(stream.error());
         }
 
         SPDLOG_INFO("mti610: replaying {} ({} bytes)", path, (*stream)->size());
-        return std::unique_ptr<mti610::ByteStream>(std::move(*stream));
+        return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
     };
 }
 

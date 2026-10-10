@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "bd992/tcp_stream.h"
+#include "byte_stream/tcp_stream.h"
 
 #include <cerrno>
 #include <cstring>
@@ -14,7 +14,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace bd992
+namespace byte_stream
 {
 
 namespace
@@ -135,7 +135,7 @@ Result<std::unique_ptr<TcpStream>> TcpStream::connect(const std::string& host, s
     const int rc = ::getaddrinfo(host.c_str(), service.c_str(), &hints, &resolved);
     if (rc != 0 || resolved == nullptr)
     {
-        return not_found(host + ": " + ::gai_strerror(rc));
+        return std::unexpected(Error{Error::Kind::NotFound, host + ": " + ::gai_strerror(rc), rc});
     }
 
     int lastErrno = 0;
@@ -160,7 +160,8 @@ Result<std::unique_ptr<TcpStream>> TcpStream::connect(const std::string& host, s
     }
 
     ::freeaddrinfo(resolved);
-    return connect_failed(host + ":" + service, lastErrno);
+    return std::unexpected(Error{Error::Kind::ConnectFailed,
+                                 host + ":" + service + ": " + std::strerror(lastErrno), lastErrno});
 }
 
 bool TcpStream::sendAll(std::span<const std::uint8_t> data)
@@ -257,4 +258,4 @@ void TcpStream::close()
     }
 }
 
-} // namespace bd992
+} // namespace byte_stream

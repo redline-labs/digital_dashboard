@@ -81,7 +81,8 @@ unsigned millisecondsUntil(std::chrono::steady_clock::time_point deadline)
 
 Radio::Radio(StreamFactory factory, Options options) :
     mFactory(std::move(factory)),
-    mOptions(std::move(options))
+    mOptions(std::move(options)),
+    mBackoff(mOptions.reconnectBackoff)
 {
 }
 
@@ -126,6 +127,10 @@ void Radio::dropConnectionLocked(std::string reason)
     {
         ++mStats.disconnects;
         SPDLOG_WARN("xpr: session lost: {}", reason);
+        // A lost session waits like a failed connect, or a radio that drops
+        // every session at once would be reconnected at the pump rate.
+        const auto now = std::chrono::steady_clock::now();
+        mNextConnectAttempt = now + mBackoff.failed(now);
     }
 
     mConnected = false;
@@ -177,21 +182,10 @@ Result<void> Radio::ensureConnectedLocked(bool force)
 
     const auto scheduleRetry = [this, now] {
         ++mStats.connectFailures;
-        if (mOptions.reconnectBackoff.empty())
-        {
-            mNextConnectAttempt = now;
-            return;
-        }
-
-        const std::size_t index = std::min(mBackoffIndex, mOptions.reconnectBackoff.size() - 1);
-        mNextConnectAttempt = now + mOptions.reconnectBackoff[index];
-        if (mBackoffIndex + 1 < mOptions.reconnectBackoff.size())
-        {
-            ++mBackoffIndex;
-        }
+        mNextConnectAttempt = now + mBackoff.failed(now);
     };
 
-    Result<std::unique_ptr<ByteStream>> stream = mFactory();
+    Result<std::unique_ptr<byte_stream::ByteStream>> stream = mFactory();
     if (!stream.has_value())
     {
         mStats.lastError = to_string(stream.error());
@@ -210,7 +204,7 @@ Result<void> Radio::ensureConnectedLocked(bool force)
     }
 
     ++mStats.connects;
-    mBackoffIndex = 0;
+    mBackoff.connected(now);
     mConnected = true;
     mStats.lastError.clear();
     SPDLOG_INFO("xpr: session up, our address 0x{:04x}, master 0x{:04x}", mAddress, mMasterAddress);

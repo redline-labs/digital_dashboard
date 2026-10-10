@@ -7,8 +7,8 @@ parent: Libraries
 
 ## Overview
 
-Talking to a MOTOTRBO radio over the network: a `ByteStream` abstraction with
-a TCP implementation, the XNL session with its handshake and reconnection,
+Talking to a MOTOTRBO radio over the network, over a TCP
+[byte_stream](byte_stream.html): the XNL session with its handshake and reconnection,
 the typed queries a node needs (channel, counts, status items, identity,
 stepping and selecting a channel), and a UDP socket for the NAI data
 services. Everything here owns a socket or a mutex; nothing here knows a
@@ -26,8 +26,6 @@ a schema. The rationale is in the [design notes](../design/mototrbo.html).
 
 | Header | |
 | --- | --- |
-| `xpr/byte_stream.h` | `ByteStream`: the three methods the session is written against, never a socket. |
-| `xpr/tcp_stream.h` | `TcpStream::connect(host, port, timeout)`: a client-only `ByteStream` over TCP. |
 | `xpr/radio.h` | `Radio`: the XNL session and the typed queries. `connect`, `channel`, `channelCounts`, `status`, `identity`, `stepChannel`, `selectChannel`, `pump`. |
 | `xpr/data_services.h` | `DataService`: a UDP endpoint bound to one NAI port, talking to one radio. Not wired to a node yet. |
 | `xpr/error.h` | `xpr::Error`: a connection error with a message and an integer. `NotConnected` clears on its own once the reconnect succeeds. |

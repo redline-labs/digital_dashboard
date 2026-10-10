@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// The Config/Measurement handshake, as a synchronous helper over a ByteStream.
+// The Config/Measurement handshake, as a synchronous helper over a byte_stream::ByteStream.
 //
 // THIS IS THE PIECE THE BD992 HAS NO EQUIVALENT OF. A Trimble receiver has no
 // modes: it streams, and configuration happens on a second socket while it
@@ -38,7 +38,7 @@
 #include <string>
 #include <vector>
 
-#include "mti610/byte_stream.h"
+#include "byte_stream/byte_stream.h"
 #include "mti610/error.h"
 #include "mti610/output_config.h"
 #include "xbus/commands.h"
@@ -105,7 +105,7 @@ class DeviceSession
     // Neither the stream nor the framer is owned. Both belong to StreamClient,
     // which is what makes an exchange able to read past the data messages that
     // arrive in the middle of one.
-    DeviceSession(ByteStream& stream, xbus::Framer& framer, SessionOptions options);
+    DeviceSession(byte_stream::ByteStream& stream, xbus::Framer& framer, SessionOptions options);
 
     // Called with any MTData2 that turns up during a configuration exchange.
     // Optional: during startup there is nothing useful to do with one, but
@@ -161,7 +161,7 @@ class DeviceSession
     // Pump bytes from the stream into the framer until `deadline`.
     bool pump(unsigned timeoutMs);
 
-    ByteStream& mStream;
+    byte_stream::ByteStream& mStream;
     xbus::Framer& mFramer;
     SessionOptions mOptions;
 

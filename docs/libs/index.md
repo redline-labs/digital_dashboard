@@ -45,6 +45,7 @@ Every library is listed; the ones without a page yet say so.
 | Library | Target | What it is | Page |
 |---|---|---|---|
 | `gsof` | `gsof` | The Trimble GSOF protocol. `constexpr`, no I/O. | [gsof](gsof.html) |
+| `byte_stream` | `byte_stream` | The byte stream every device transport is written against: TCP, replay, reconnect backoff. | [byte_stream](byte_stream.html) |
 | `bd992` | `bd992` | TCP, reconnection and read-before-write configuration for a BD992. | [bd992](bd992.html) |
 | `xbus` | `xbus` | The Xsens XBus protocol. `constexpr`, no I/O. | [xbus](xbus.html) |
 | `mti610` | `mti610` | The serial port, the reader thread and the Config/Measurement handshake for an MTi-610. | [mti610](mti610.html) |

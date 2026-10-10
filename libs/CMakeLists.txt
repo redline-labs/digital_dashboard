@@ -1,4 +1,7 @@
 add_subdirectory(helpers)
+# The byte stream every device transport is written against, with its TCP and
+# replay streams and the reconnect backoff. No device code.
+add_subdirectory(byte_stream)
 # cpp-httplib behind its warning suppression. Header-only and dependency-free,
 # so its position is arbitrary; first because both HTTP users sit far below.
 add_subdirectory(httplib_wrapped)

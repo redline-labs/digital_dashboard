@@ -34,7 +34,7 @@
 #include <thread>
 #include <vector>
 
-#include "mti610/byte_stream.h"
+#include "byte_stream/byte_stream.h"
 #include "mti610/device_session.h"
 #include "mti610/error.h"
 #include "mti610/output_config.h"
@@ -47,7 +47,7 @@ namespace mti610
 class StreamClient
 {
   public:
-    using StreamFactory = std::function<Result<std::unique_ptr<ByteStream>>()>;
+    using StreamFactory = std::function<Result<std::unique_ptr<byte_stream::ByteStream>>()>;
 
     // One MTData2, with its items already walked. Called on the reader thread.
     //
@@ -71,6 +71,7 @@ class StreamClient
 
         // Tried in order, then the last repeats. Capped rather than doubling
         // forever so a device replugged after an hour is picked up in seconds.
+        // See byte_stream::Backoff for when it starts over.
         std::vector<std::chrono::milliseconds> reopenBackoff {
             std::chrono::milliseconds(250), std::chrono::milliseconds(500),
             std::chrono::milliseconds(1000), std::chrono::milliseconds(2000),
@@ -160,7 +161,7 @@ class StreamClient
     void run();
 
     // One connection's lifetime: handshake, then stream until it ends.
-    void serve(ByteStream& stream);
+    void serve(byte_stream::ByteStream& stream);
 
     // The Config-state pass. Returns false when the port died during it.
     bool handshake(DeviceSession& session);

@@ -49,7 +49,7 @@ void ControlClient::disconnect()
     mFramer.reset();
 }
 
-Result<ByteStream*> ControlClient::ensureConnected()
+Result<byte_stream::ByteStream*> ControlClient::ensureConnected()
 {
     if (mStream && mStream->isOpen())
     {
@@ -59,7 +59,7 @@ Result<ByteStream*> ControlClient::ensureConnected()
     mStream.reset();
     mFramer.reset();
 
-    Result<std::unique_ptr<ByteStream>> opened = mFactory();
+    Result<std::unique_ptr<byte_stream::ByteStream>> opened = mFactory();
     if (!opened.has_value())
     {
         return std::unexpected(opened.error());
@@ -119,7 +119,7 @@ Result<void> ControlClient::readUntil(std::chrono::steady_clock::time_point dead
 
 Result<ControlClient::Reply> ControlClient::exchangeLocked(std::span<const std::uint8_t> packet)
 {
-    const Result<ByteStream*> stream = ensureConnected();
+    const Result<byte_stream::ByteStream*> stream = ensureConnected();
     if (!stream.has_value())
     {
         return std::unexpected(stream.error());
@@ -191,7 +191,7 @@ Result<gsof::appfile::ApplicationFile> ControlClient::readApplicationFile(std::u
 {
     const std::lock_guard<std::mutex> lock(mMutex);
 
-    const Result<ByteStream*> stream = ensureConnected();
+    const Result<byte_stream::ByteStream*> stream = ensureConnected();
     if (!stream.has_value())
     {
         return std::unexpected(stream.error());

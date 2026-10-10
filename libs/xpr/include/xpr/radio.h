@@ -38,7 +38,8 @@
 #include "mototrbo/control.h"
 #include "mototrbo/xcmp.h"
 #include "mototrbo/xnl.h"
-#include "xpr/byte_stream.h"
+#include "byte_stream/backoff.h"
+#include "byte_stream/byte_stream.h"
 #include "xpr/error.h"
 
 namespace xpr
@@ -69,7 +70,7 @@ struct Broadcast
 class Radio
 {
   public:
-    using StreamFactory = std::function<Result<std::unique_ptr<ByteStream>>()>;
+    using StreamFactory = std::function<Result<std::unique_ptr<byte_stream::ByteStream>>()>;
 
     struct Options
     {
@@ -83,7 +84,8 @@ class Radio
 
         // Tried in order, then the last repeats. Nothing here sleeps: a failed
         // attempt sets the time of the next one and returns, so a node loop
-        // stays responsive while the radio is unplugged.
+        // stays responsive while the radio is unplugged. A session lost soon
+        // after it came up keeps stepping; see byte_stream::Backoff.
         std::vector<std::chrono::milliseconds> reconnectBackoff {
             std::chrono::milliseconds(250), std::chrono::milliseconds(500),
             std::chrono::milliseconds(1000), std::chrono::milliseconds(2000),
@@ -260,7 +262,7 @@ class Radio
     Options mOptions;
 
     mutable std::mutex mMutex;
-    std::unique_ptr<ByteStream> mStream;
+    std::unique_ptr<byte_stream::ByteStream> mStream;
 
     // Bytes read from the socket that do not yet make a whole frame.
     std::vector<std::uint8_t> mRxBuffer;
@@ -284,7 +286,7 @@ class Radio
     // sleeping rather than spinning. Only ever touched under the lock.
     bool mPumpIdle { false };
 
-    std::size_t mBackoffIndex { 0 };
+    byte_stream::Backoff mBackoff;
     std::chrono::steady_clock::time_point mNextConnectAttempt {};
 
     Stats mStats;

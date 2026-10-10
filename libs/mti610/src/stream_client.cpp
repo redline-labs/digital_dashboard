@@ -2,6 +2,8 @@
 
 #include "mti610/stream_client.h"
 
+#include "byte_stream/backoff.h"
+
 #include <spdlog/spdlog.h>
 
 #include <array>
@@ -9,37 +11,6 @@
 
 namespace mti610
 {
-namespace
-{
-
-std::chrono::milliseconds backoffFor(const std::vector<std::chrono::milliseconds>& schedule,
-                                     std::size_t attempt)
-{
-    if (schedule.empty())
-    {
-        return std::chrono::milliseconds(1000);
-    }
-
-    return schedule[std::min(attempt, schedule.size() - 1)];
-}
-
-// Sleep, but wake up promptly when asked to stop. A five-second backoff that
-// could not be interrupted would make Ctrl-C take five seconds, which is long
-// enough that people start using SIGKILL.
-void interruptibleSleep(std::chrono::milliseconds total, const std::atomic<bool>& running)
-{
-    constexpr auto kSlice = std::chrono::milliseconds(50);
-    auto remaining = total;
-
-    while (remaining.count() > 0 && running.load())
-    {
-        const auto slice = std::min(kSlice, remaining);
-        std::this_thread::sleep_for(slice);
-        remaining -= slice;
-    }
-}
-
-} // namespace
 
 StreamClient::StreamClient(StreamFactory factory, Options options, DataHandler onData) :
     mFactory(std::move(factory)),
@@ -117,11 +88,12 @@ std::vector<Change> StreamClient::lastChanges() const
 
 void StreamClient::run()
 {
-    std::size_t attempt = 0;
+    byte_stream::Backoff backoff(mOptions.reopenBackoff);
+    const auto keepGoing = [this] { return mRunning.load(); };
 
     while (mRunning.load())
     {
-        Result<std::unique_ptr<ByteStream>> stream = mFactory();
+        Result<std::unique_ptr<byte_stream::ByteStream>> stream = mFactory();
 
         if (!stream)
         {
@@ -136,14 +108,13 @@ void StreamClient::run()
                 break;
             }
 
-            const auto wait = backoffFor(mOptions.reopenBackoff, attempt);
+            const auto wait = backoff.failed(std::chrono::steady_clock::now());
             SPDLOG_WARN("mti610: {}; retrying in {} ms", to_string(stream.error()), wait.count());
-            interruptibleSleep(wait, mRunning);
-            ++attempt;
+            byte_stream::sleepWhile(wait, keepGoing);
             continue;
         }
 
-        attempt = 0;
+        backoff.connected(std::chrono::steady_clock::now());
         {
             const std::lock_guard<std::mutex> lock(mStateMutex);
             ++mStats.opens;
@@ -165,9 +136,9 @@ void StreamClient::run()
             break;
         }
 
-        const auto wait = backoffFor(mOptions.reopenBackoff, 0);
+        const auto wait = backoff.failed(std::chrono::steady_clock::now());
         SPDLOG_WARN("mti610: the port closed; reopening in {} ms", wait.count());
-        interruptibleSleep(wait, mRunning);
+        byte_stream::sleepWhile(wait, keepGoing);
     }
 
     mRunning.store(false);
@@ -257,7 +228,7 @@ bool StreamClient::handshake(DeviceSession& session)
     return true;
 }
 
-void StreamClient::serve(ByteStream& stream)
+void StreamClient::serve(byte_stream::ByteStream& stream)
 {
     // One framer for the whole connection, shared with the session: a reply
     // and a data message can arrive in the same read, and two framers would

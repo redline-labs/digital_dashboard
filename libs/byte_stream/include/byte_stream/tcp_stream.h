@@ -2,18 +2,16 @@
 //
 // A ByteStream over TCP.
 //
-// The receiver is configured as a TCP server and we connect to it, so this is
-// only ever a client -- there is no listener here. That is the whole point of
-// the arrangement: nothing leaves the receiver until something attaches, so a
-// vehicle network stays quiet and the node is the only thing that has to be
-// running.
+// Only ever a client: the devices here (a GNSS receiver, a radio) are TCP
+// servers and the node connects to them, so nothing leaves a device until
+// something attaches.
 //
-// Address resolution is AF_UNSPEC, so a receiver reachable over IPv6 works
+// Address resolution is AF_UNSPEC, so a device reachable over IPv6 works
 // without a second code path, and every address getaddrinfo returns is tried
 // in turn before giving up.
 
-#ifndef BD992_TCP_STREAM_H
-#define BD992_TCP_STREAM_H
+#ifndef BYTE_STREAM_TCP_STREAM_H
+#define BYTE_STREAM_TCP_STREAM_H
 
 #include <chrono>
 #include <cstdint>
@@ -21,10 +19,10 @@
 #include <span>
 #include <string>
 
-#include "bd992/byte_stream.h"
-#include "bd992/error.h"
+#include "byte_stream/byte_stream.h"
+#include "byte_stream/error.h"
 
-namespace bd992
+namespace byte_stream
 {
 
 class TcpStream final : public ByteStream
@@ -32,7 +30,7 @@ class TcpStream final : public ByteStream
   public:
     // Resolve `host` and connect to `port`, giving up after `connectTimeout`.
     //
-    // The timeout is why the connect is non-blocking: a receiver that is
+    // The timeout is why the connect is non-blocking: a device that is
     // powered off but whose address still routes leaves a blocking connect()
     // sitting for the kernel's own timeout, which on Linux is over two
     // minutes. A reconnect loop built on that cannot be interrupted promptly.
@@ -58,6 +56,6 @@ class TcpStream final : public ByteStream
     std::string mPeer;
 };
 
-} // namespace bd992
+} // namespace byte_stream
 
-#endif // BD992_TCP_STREAM_H
+#endif // BYTE_STREAM_TCP_STREAM_H

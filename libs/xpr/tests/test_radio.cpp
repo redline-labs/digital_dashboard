@@ -65,7 +65,7 @@ constexpr std::uint16_t kAssignedAddress = 0x0004;
 // An in-memory stream: whatever the client writes goes to a responder, and
 // whatever the responder returns becomes readable.
 // ---------------------------------------------------------------------------
-class LoopbackStream final : public xpr::ByteStream
+class LoopbackStream final : public byte_stream::ByteStream
 {
   public:
     using Responder = std::function<std::vector<std::uint8_t>(std::span<const std::uint8_t>)>;
@@ -427,7 +427,7 @@ std::unique_ptr<xpr::Radio> makeRadio(FakeRadio& fake, xpr::Radio::Options optio
     options.handshakeTimeout = std::chrono::milliseconds(500);
 
     return std::make_unique<xpr::Radio>(
-        [&fake]() -> xpr::Result<std::unique_ptr<xpr::ByteStream>> {
+        [&fake]() -> xpr::Result<std::unique_ptr<byte_stream::ByteStream>> {
             auto stream = std::make_unique<LoopbackStream>(
                 [&fake](std::span<const std::uint8_t> sent) { return fake(sent); });
 
@@ -440,7 +440,7 @@ std::unique_ptr<xpr::Radio> makeRadio(FakeRadio& fake, xpr::Radio::Options optio
             const std::vector<std::uint8_t> bytes = serialize(announcement);
             stream->preload(bytes);
 
-            return std::unique_ptr<xpr::ByteStream>(std::move(stream));
+            return std::unique_ptr<byte_stream::ByteStream>(std::move(stream));
         },
         options);
 }
@@ -647,7 +647,7 @@ void checkNotConnected()
     options.reconnectBackoff.clear();
 
     xpr::Radio radio(
-        []() -> xpr::Result<std::unique_ptr<xpr::ByteStream>> {
+        []() -> xpr::Result<std::unique_ptr<byte_stream::ByteStream>> {
             return xpr::connect_failed("nothing is listening", 0);
         },
         options);

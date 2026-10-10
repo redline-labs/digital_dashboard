@@ -27,7 +27,7 @@
 #include <string>
 #include <vector>
 
-#include "bd992/byte_stream.h"
+#include "byte_stream/byte_stream.h"
 #include "bd992/error.h"
 #include "gsof/commands.h"
 #include "gsof/framer.h"
@@ -39,7 +39,7 @@ namespace bd992
 class ControlClient
 {
   public:
-    using StreamFactory = std::function<Result<std::unique_ptr<ByteStream>>()>;
+    using StreamFactory = std::function<Result<std::unique_ptr<byte_stream::ByteStream>>()>;
 
     struct Options
     {
@@ -105,7 +105,7 @@ class ControlClient
 
   private:
     // Caller holds mMutex.
-    Result<ByteStream*> ensureConnected();
+    Result<byte_stream::ByteStream*> ensureConnected();
     Result<Reply> exchangeLocked(std::span<const std::uint8_t> packet);
     // Read packets until `accept` is satisfied or the deadline passes.
     Result<void> readUntil(std::chrono::steady_clock::time_point deadline,
@@ -115,7 +115,7 @@ class ControlClient
     Options mOptions;
 
     mutable std::mutex mMutex;
-    std::unique_ptr<ByteStream> mStream;
+    std::unique_ptr<byte_stream::ByteStream> mStream;
     gsof::Framer mFramer;
     std::uint8_t mDeviceType { 0 };
     // Incremented per application file sent, as the ICD describes.

@@ -4,7 +4,7 @@
 //
 // The pipeline is bytes -> Framer -> PageAssembler -> RecordIterator, and it
 // is the same pipeline whether the bytes came from a socket or from a captured
-// file, because it is written against ByteStream. That is what makes
+// file, because it is written against byte_stream::ByteStream. That is what makes
 // `bd992 --replay` a real test of the decode path rather than a demo.
 //
 // RECONNECTION IS THIS CLASS'S JOB, and it is not optional. A GNSS receiver on
@@ -33,7 +33,7 @@
 #include <thread>
 #include <vector>
 
-#include "bd992/byte_stream.h"
+#include "byte_stream/byte_stream.h"
 #include "bd992/error.h"
 #include "gsof/framer.h"
 #include "gsof/record_iterator.h"
@@ -49,7 +49,7 @@ class StreamClient
     // attempt. Taking a factory rather than a host and port is what lets the
     // tests and `--replay` substitute a different source without this class
     // knowing anything about sockets.
-    using StreamFactory = std::function<Result<std::unique_ptr<ByteStream>>()>;
+    using StreamFactory = std::function<Result<std::unique_ptr<byte_stream::ByteStream>>()>;
 
     // Called on the reader thread for each record in a completed
     // transmission, known or not. Must not block: the receiver keeps sending
@@ -67,7 +67,9 @@ class StreamClient
     {
         // Tried in order, then the last one repeats. Capped rather than
         // unbounded so a receiver that comes back after an hour is picked up
-        // within seconds rather than after another hour of doubling.
+        // within seconds rather than after another hour of doubling. A
+        // connection that drops soon after opening keeps stepping; see
+        // byte_stream::Backoff.
         std::vector<std::chrono::milliseconds> reconnectBackoff {
             std::chrono::milliseconds(250),
             std::chrono::milliseconds(500),

@@ -2,31 +2,32 @@
 //
 // A bidirectional byte stream.
 //
-// Everything above this -- the framer, the page assembler, the record parsers,
-// the command exchange -- is written against these three methods and never
-// against a socket. That is what lets `--replay` feed a captured file through
-// the identical code path the live receiver uses, and what lets the tests
-// drive a scripted peer without one.
+// Everything above this -- framers, parsers, command exchanges -- is written
+// against these methods and never against a socket or a tty. That is what lets
+// `--replay` feed a captured file through the identical code path the live
+// device uses, and what lets the tests drive a scripted peer without one.
 //
 // THE CONTRACT ON recvSome IS THE PART THAT MATTERS, and it is the same one
 // apple_usb::ByteStream documents for the same reason: 0 and -1 must stay
 // distinct. A caller polling for data treats 0 as "not yet" and would spin
 // forever on a dead link if a closed peer also reported 0.
 //
-// This deliberately does not reuse apple_usb::ByteStream. It is the same three
-// methods, but libs/bd992 has no business linking a USB and CarPlay library to
-// get an interface, and an interface shared across two unrelated device stacks
-// acquires the union of both their needs.
+// One copy for the BD992, the MTi and the XPR, which each had their own -- with
+// the TCP and replay streams under it -- so a fix to connecting lands in all
+// three. It lives here, with no device code, because linking one device's
+// library to borrow an interface was the reason for the copies.
+// apple_usb::ByteStream stays separate: it is a pointer-and-length API the TLS
+// stack is written against.
 
-#ifndef BD992_BYTE_STREAM_H
-#define BD992_BYTE_STREAM_H
+#ifndef BYTE_STREAM_BYTE_STREAM_H
+#define BYTE_STREAM_BYTE_STREAM_H
 
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <sys/types.h>
 
-namespace bd992
+namespace byte_stream
 {
 
 class ByteStream
@@ -56,6 +57,6 @@ class ByteStream
     virtual void close() = 0;
 };
 
-} // namespace bd992
+} // namespace byte_stream
 
-#endif // BD992_BYTE_STREAM_H
+#endif // BYTE_STREAM_BYTE_STREAM_H

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "bd992/replay_stream.h"
+#include "byte_stream/replay_stream.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,7 +8,7 @@
 #include <fstream>
 #include <thread>
 
-namespace bd992
+namespace byte_stream
 {
 
 ReplayStream::ReplayStream(std::vector<std::uint8_t> bytes, Options options) :
@@ -26,7 +26,7 @@ Result<std::unique_ptr<ReplayStream>> ReplayStream::open(const std::string& path
     std::ifstream file(path, std::ios::binary);
     if (!file)
     {
-        return not_found("cannot open " + path);
+        return std::unexpected(Error{Error::Kind::NotFound, "cannot open " + path, 0});
     }
 
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)),
@@ -37,7 +37,7 @@ Result<std::unique_ptr<ReplayStream>> ReplayStream::open(const std::string& path
         // An empty capture would otherwise present as an immediate clean
         // end-of-stream, which looks exactly like a receiver that connected
         // and said nothing.
-        return io_error(path + " is empty");
+        return std::unexpected(Error{Error::Kind::Io, path + " is empty", 0});
     }
 
     return std::unique_ptr<ReplayStream>(new ReplayStream(std::move(bytes), options));
@@ -99,4 +99,4 @@ void ReplayStream::close()
     mOpen = false;
 }
 
-} // namespace bd992
+} // namespace byte_stream

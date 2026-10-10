@@ -39,7 +39,7 @@
 #include "pub_sub/node_identity.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "xpr/radio.h"
-#include "xpr/tcp_stream.h"
+#include "byte_stream/tcp_stream.h"
 
 namespace
 {
@@ -52,15 +52,15 @@ xpr::Radio::StreamFactory tcpFactory(const RadioConfig& radio)
 {
     return [host = radio.host, port = radio.port,
             timeout = std::chrono::milliseconds(radio.connectTimeoutMs)]()
-               -> xpr::Result<std::unique_ptr<xpr::ByteStream>> {
-        xpr::Result<std::unique_ptr<xpr::TcpStream>> stream = xpr::TcpStream::connect(host, port, timeout);
+               -> xpr::Result<std::unique_ptr<byte_stream::ByteStream>> {
+        auto stream = byte_stream::TcpStream::connect(host, port, timeout);
         if (!stream.has_value())
         {
-            return std::unexpected(stream.error());
+            return xpr::from_stream(stream.error());
         }
 
         SPDLOG_INFO("xpr: connected to {}", (*stream)->peer());
-        return std::unique_ptr<xpr::ByteStream>(std::move(*stream));
+        return std::unique_ptr<byte_stream::ByteStream>(std::move(*stream));
     };
 }
 

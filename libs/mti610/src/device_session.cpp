@@ -51,7 +51,7 @@ bool DeviceInfo::looksLikeMti610() const
     return productCode.rfind("MTi-610", 0) == 0;
 }
 
-DeviceSession::DeviceSession(ByteStream& stream, xbus::Framer& framer, SessionOptions options) :
+DeviceSession::DeviceSession(byte_stream::ByteStream& stream, xbus::Framer& framer, SessionOptions options) :
     mStream(stream),
     mFramer(framer),
     mOptions(options)

@@ -461,6 +461,8 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     bag (MCAP record/replay),
                     can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
                   (CAN channels) -- docs/libs/can_motec.md for the MoTeC one,
+                    byte_stream (the stream, TCP, replay and backoff every
+                    device transport shares),
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),
                     xbus (Xsens XBus, constexpr) + mti610 (its SERIAL transport,
                     the tree's only termios code) -- docs/nodes/mti610_bridge.md,

@@ -87,4 +87,18 @@ std::unexpected<Error> not_permitted(std::string message)
     return std::unexpected(Error { Error::Kind::NotPermitted, std::move(message), 0 });
 }
 
+std::unexpected<Error> from_stream(const byte_stream::Error& error)
+{
+    switch (error.kind)
+    {
+        case byte_stream::Error::Kind::NotFound:
+            return not_found(error.message);
+        case byte_stream::Error::Kind::ConnectFailed:
+            return open_failed(error.message, error.code);
+        case byte_stream::Error::Kind::Io:
+            return io_error(error.message, error.code);
+    }
+    return io_error(error.message, error.code);
+}
+
 } // namespace mti610
