@@ -16,6 +16,7 @@ target_include_directories(bd992_mock PRIVATE
 )
 
 target_link_libraries(bd992_mock PRIVATE
+    node_config
     core
     # For road_graph/geometry.h -- the distance, bearing and 1e-7 fixed-point
     # vocabulary the whole map half of this tree already speaks. Header-only,
@@ -58,6 +59,7 @@ add_executable(bd992_mock_test_config
 )
 target_include_directories(bd992_mock_test_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(bd992_mock_test_config PRIVATE
+    node_config
     road_graph zenoh_pub_sub spdlog::spdlog yaml-cpp::yaml-cpp)
 add_project_test(TARGET bd992_mock_test_config LABELS bd992_mock unit)
 

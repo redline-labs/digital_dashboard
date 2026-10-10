@@ -20,6 +20,7 @@ target_include_directories(map_match PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(map_match
     PRIVATE
+    node_config
     core
         road_graph
         map_wire
@@ -45,6 +46,7 @@ target_include_directories(map_match_test_config PRIVATE ${CMAKE_CURRENT_SOURCE_
 
 target_link_libraries(map_match_test_config
     PRIVATE
+    node_config
         zenoh_pub_sub
         schemas
         spdlog::spdlog

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include <Eigen/Geometry>
 
 #include <cmath>
@@ -19,52 +21,12 @@ namespace state_estimator
 namespace
 {
 
+using node_config::Context;
+using node_config::readString;
+using node_config::readBool;
+using node_config::readNumber;
+
 constexpr double kDeg = std::numbers::pi / 180.0;
-
-// Accumulates rather than stopping, so a config with three mistakes takes one
-// run to fix rather than three.
-struct Context
-{
-    bool ok{true};
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
-
-void readString(const YAML::Node& parent, const char* key, std::string& out, Context& context, const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node) return;
-    if (!node.IsScalar())
-    {
-        context.fail(where + key + " must be a string");
-        return;
-    }
-    out = node.as<std::string>();
-}
-
-template <typename T>
-void readNumber(const YAML::Node& parent, const char* key, T& out, Context& context, const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node) return;
-    try
-    {
-        out = node.as<T>();
-    }
-    catch (const YAML::Exception&)
-    {
-        context.fail(where + key + " must be a number");
-        return;
-    }
-    if constexpr (std::is_floating_point_v<T>)
-    {
-        if (!std::isfinite(out)) context.fail(where + key + " must be finite");
-    }
-}
 
 void readVector(const YAML::Node& parent, const char* key, Eigen::Vector3d& out, Context& context,
                 const std::string& where)
@@ -86,20 +48,6 @@ void readVector(const YAML::Node& parent, const char* key, Eigen::Vector3d& out,
         return;
     }
     if (!out.allFinite()) context.fail(where + key + " must be finite");
-}
-
-void readBool(const YAML::Node& parent, const char* key, bool& out, Context& context, const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node) return;
-    try
-    {
-        out = node.as<bool>();
-    }
-    catch (const YAML::Exception&)
-    {
-        context.fail(where + key + " must be true or false");
-    }
 }
 
 template <int N>
@@ -135,14 +83,6 @@ const YAML::Node section(const YAML::Node& root, const char* name, Context& cont
         return YAML::Node();
     }
     return node;
-}
-
-void checkKey(const std::string& key, const char* field, Context& context)
-{
-    // A key outside the allowed charset fails SILENTLY -- nothing publishes,
-    // nothing subscribes. Checked here so a typo is a startup error.
-    if (const std::string problem = pub_sub::topicKeyProblem(key); !problem.empty())
-        context.fail(std::string(field) + " ('" + key + "'): " + problem);
 }
 
 void positive(double value, const char* field, Context& context)
@@ -291,10 +231,10 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         readNumber(n, "boresight_walk_deg_per_sqrt_h", c.boresightWalkDegPerSqrtH, context, "calibration.");
     }
 
-    checkKey(out.imuPrefix, "inputs.imu_prefix", context);
-    checkKey(out.gnssPrefix, "inputs.gnss_prefix", context);
-    checkKey(out.stateKey, "outputs.state_key", context);
-    checkKey(out.statusKey, "outputs.status_key", context);
+    node_config::checkTopicKey(out.imuPrefix, "inputs.imu_prefix", context);
+    node_config::checkTopicKey(out.gnssPrefix, "inputs.gnss_prefix", context);
+    node_config::checkTopicKey(out.stateKey, "outputs.state_key", context);
+    node_config::checkTopicKey(out.statusKey, "outputs.status_key", context);
     if (out.stateKey == out.statusKey) context.fail("outputs.state_key and outputs.status_key must differ");
     if (out.stateDecimation == 0) context.fail("outputs.state_decimation must be at least 1");
     positive(out.leverArmSigmaM, "vehicle.lever_arm_sigma_m", context);

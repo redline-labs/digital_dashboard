@@ -2,6 +2,8 @@
 
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include <spdlog/spdlog.h>
 #include <yaml-cpp/yaml.h>
 
@@ -13,18 +15,7 @@ namespace mti610_node
 namespace
 {
 
-// Accumulates problems instead of stopping at the first, so one run reports
-// everything wrong with the file.
-struct Context
-{
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
+using node_config::Context;
 
 template <typename T>
 void readUint(Context& context, const YAML::Node& node, const std::string& where, T& out)

@@ -19,6 +19,7 @@ add_executable(bd992_bridge
 
 target_link_libraries(bd992_bridge
     PRIVATE
+    node_config
     core
         bd992
         gsof
@@ -43,6 +44,7 @@ target_include_directories(bd992_test_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 
 target_link_libraries(bd992_test_config
     PRIVATE
+    node_config
         bd992
         gsof
         spdlog::spdlog

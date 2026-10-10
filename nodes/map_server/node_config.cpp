@@ -2,6 +2,8 @@
 
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include "core/core.h"
 
 #include <yaml-cpp/yaml.h>
@@ -22,83 +24,14 @@ namespace map_server
 namespace
 {
 
-// Accumulates problems rather than failing on the first, so a config with
-// three mistakes takes one run to fix rather than three.
-struct Context
+// The shared failure accumulator, plus the directory the YAML file came from for
+// resolving relative paths (empty for a string).
+struct Context : node_config::Context
 {
-    // Directory the YAML file came from, for relative paths; empty for a string.
     std::string base_dir;
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
 };
-
-void readString(const YAML::Node& parent, const char* key, std::string& out, Context& context,
-                const std::string& where)
-{
-    if (!parent[key])
-    {
-        return;
-    }
-
-    try
-    {
-        out = parent[key].as<std::string>();
-    }
-    catch (const YAML::Exception&)
-    {
-        context.fail(where + "." + key + " must be a string");
-    }
-}
-
-template <typename T>
-void readUint(const YAML::Node& parent, const char* key, T& out, Context& context,
-              const std::string& where)
-{
-    if (!parent[key])
-    {
-        return;
-    }
-
-    try
-    {
-        const auto value = parent[key].as<std::uint64_t>();
-        if (value > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))
-        {
-            context.fail(where + "." + key + ": " + std::to_string(value) + " is out of range");
-            return;
-        }
-        out = static_cast<T>(value);
-    }
-    catch (const YAML::Exception&)
-    {
-        context.fail(where + "." + key + " must be a non-negative integer");
-    }
-}
-
-// A zenoh key that is not in the allowed charset fails SILENTLY -- `*` and `?`
-// are rejected by zenoh itself, `@` makes the segment invisible to every
-// wildcard subscription, `%` is this tree's mangling separator. Checking here
-// means a typo in the YAML is a startup error rather than a service nobody can
-// reach. See pub_sub::topicKeyProblem().
-void checkKey(const std::string& key, const char* field, Context& context)
-{
-    if (key.empty())
-    {
-        context.fail(std::string("services.") + field + " must not be empty");
-        return;
-    }
-
-    const std::string problem = pub_sub::topicKeyProblem(key);
-    if (!problem.empty())
-    {
-        context.fail(std::string("services.") + field + " ('" + key + "'): " + problem);
-    }
-}
+using node_config::readUint;
+using node_config::readString;
 
 void parseTilesets(const YAML::Node& node, std::vector<TilesetConfig>& out, Context& context)
 {
@@ -312,15 +245,15 @@ void parseServices(const YAML::Node& node, ServiceConfig& out, Context& context)
         readUint(node, "status_interval_ms", out.statusIntervalMs, context, "services");
     }
 
-    checkKey(out.tileKey, "tile_key", context);
-    checkKey(out.catalogKey, "catalog_key", context);
-    checkKey(out.assetKey, "asset_key", context);
-    checkKey(out.statusKey, "status_key", context);
-    checkKey(out.nearestKey, "nearest_key", context);
-    checkKey(out.routeKey, "route_key", context);
-    checkKey(out.graphInfoKey, "graph_info_key", context);
-    checkKey(out.trackCatalogKey, "track_catalog_key", context);
-    checkKey(out.trackDetailKey, "track_detail_key", context);
+    node_config::checkTopicKey(out.tileKey, "services.tile_key", context);
+    node_config::checkTopicKey(out.catalogKey, "services.catalog_key", context);
+    node_config::checkTopicKey(out.assetKey, "services.asset_key", context);
+    node_config::checkTopicKey(out.statusKey, "services.status_key", context);
+    node_config::checkTopicKey(out.nearestKey, "services.nearest_key", context);
+    node_config::checkTopicKey(out.routeKey, "services.route_key", context);
+    node_config::checkTopicKey(out.graphInfoKey, "services.graph_info_key", context);
+    node_config::checkTopicKey(out.trackCatalogKey, "services.track_catalog_key", context);
+    node_config::checkTopicKey(out.trackDetailKey, "services.track_detail_key", context);
 
     // Two services on one key both answer, and a client takes whichever reply
     // arrives first -- so a tile request would sometimes come back as a

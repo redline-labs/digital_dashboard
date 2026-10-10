@@ -18,6 +18,9 @@ add_subdirectory(cli)
 # Node health: the reporter every node declares and the monitor `inspect health`
 # reads. After core (systemd notifications) and pub_sub.
 add_subdirectory(node_health)
+# The leaf readers every node's hand-written YAML parser shares. After pub_sub
+# (topic key checks).
+add_subdirectory(node_config)
 
 # What the board is and what it is doing, read from /proc, /sys and /etc.
 # Every reader takes its root so the parsers are testable against a fixture

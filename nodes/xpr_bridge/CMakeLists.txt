@@ -17,6 +17,7 @@ add_executable(xpr_bridge
 
 target_link_libraries(xpr_bridge
     PRIVATE
+    node_config
     core
         xpr
         mototrbo
@@ -41,6 +42,7 @@ target_include_directories(xpr_test_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(xpr_test_config
     PRIVATE
+    node_config
         xpr
         zenoh_pub_sub
         spdlog::spdlog

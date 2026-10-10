@@ -10,6 +10,7 @@ add_executable(can_bridge
 
 target_link_libraries(can_bridge
     PRIVATE
+    node_config
     core
         can
         can_backends
@@ -33,6 +34,7 @@ add_executable(can_bridge_test_config
 
 target_link_libraries(can_bridge_test_config
     PRIVATE
+    node_config
         can
         spdlog::spdlog
         yaml-cpp::yaml-cpp

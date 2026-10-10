@@ -19,6 +19,7 @@ add_executable(mti610_bridge
 
 target_link_libraries(mti610_bridge
     PRIVATE
+    node_config
     core
         mti610
         xbus
@@ -43,6 +44,7 @@ target_include_directories(mti610_test_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 
 target_link_libraries(mti610_test_config
     PRIVATE
+    node_config
         mti610
         xbus
         spdlog::spdlog

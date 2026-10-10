@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -17,65 +19,9 @@ namespace map_match
 namespace
 {
 
-// Accumulates rather than stopping, so a config with three mistakes takes one
-// run to fix rather than three.
-struct Context
-{
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
-
-void readString(const YAML::Node& parent, const char* key, std::string& out, Context& context,
-                const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node)
-    {
-        return;
-    }
-    if (!node.IsScalar())
-    {
-        context.fail(where + "." + key + " must be a string");
-        return;
-    }
-    out = node.as<std::string>();
-}
-
-template <typename T>
-void readNumber(const YAML::Node& parent, const char* key, T& out, Context& context,
-                const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node)
-    {
-        return;
-    }
-    try
-    {
-        out = node.as<T>();
-    }
-    catch (const YAML::Exception&)
-    {
-        context.fail(where + "." + key + " must be a number");
-    }
-}
-
-void checkKey(const std::string& key, const char* field, Context& context)
-{
-    // A zenoh key outside the allowed charset fails SILENTLY -- the publisher
-    // refuses and nothing subscribes. Checking here turns a typo into a startup
-    // error rather than a topic nobody can reach.
-    // Empty string means valid; the message is what a user can act on.
-    if (const std::string problem = pub_sub::topicKeyProblem(key); !problem.empty())
-    {
-        context.fail(std::string(field) + " ('" + key + "'): " + problem);
-    }
-}
+using node_config::Context;
+using node_config::readString;
+using node_config::readNumber;
 
 } // namespace
 
@@ -160,11 +106,11 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         }
     }
 
-    checkKey(out.position.positionKey, "position.position_key", context);
-    checkKey(out.position.velocityKey, "position.velocity_key", context);
-    checkKey(out.position.sigmaKey, "position.sigma_key", context);
-    checkKey(out.services.horizonKey, "services.horizon_key", context);
-    checkKey(out.services.statusKey, "services.status_key", context);
+    node_config::checkTopicKey(out.position.positionKey, "position.position_key", context);
+    node_config::checkTopicKey(out.position.velocityKey, "position.velocity_key", context);
+    node_config::checkTopicKey(out.position.sigmaKey, "position.sigma_key", context);
+    node_config::checkTopicKey(out.services.horizonKey, "services.horizon_key", context);
+    node_config::checkTopicKey(out.services.statusKey, "services.status_key", context);
 
     // Two publishers on one key interleave two message types on one topic, and
     // a subscriber decodes whichever arrives against the schema it expected --

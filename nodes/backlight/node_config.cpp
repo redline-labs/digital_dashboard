@@ -1,5 +1,7 @@
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include "pub_sub/topic_key.h"
 
 #include <spdlog/spdlog.h>
@@ -16,16 +18,7 @@ namespace backlight_node
 namespace
 {
 
-struct Context
-{
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
+using node_config::Context;
 
 } // namespace
 

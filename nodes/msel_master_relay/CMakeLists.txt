@@ -14,6 +14,7 @@ add_executable(msel_master_relay
 )
 
 target_link_libraries(msel_master_relay PRIVATE
+    node_config
     core
     spdlog::spdlog
     cxxopts::cxxopts
@@ -37,6 +38,7 @@ add_executable(msel_test_node_config
 target_include_directories(msel_test_node_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(msel_test_node_config PRIVATE
+    node_config
     msel
     zenoh_pub_sub
     spdlog::spdlog

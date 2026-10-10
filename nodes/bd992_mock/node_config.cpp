@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include <array>
 #include <fstream>
 #include <sstream>
@@ -17,64 +19,9 @@ namespace bd992_mock
 namespace
 {
 
-// Accumulates rather than stopping, so a config with three mistakes takes one
-// run to fix rather than three.
-struct Context
-{
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
-
-void readString(const YAML::Node& parent, const char* key, std::string& out, Context& context,
-                const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node)
-    {
-        return;
-    }
-    if (!node.IsScalar())
-    {
-        context.fail(where + "." + key + " must be a string");
-        return;
-    }
-    out = node.as<std::string>();
-}
-
-template <typename T>
-void readNumber(const YAML::Node& parent, const char* key, T& out, Context& context,
-                const std::string& where)
-{
-    const YAML::Node node = parent[key];
-    if (!node)
-    {
-        return;
-    }
-    try
-    {
-        out = node.as<T>();
-    }
-    catch (const YAML::Exception&)
-    {
-        context.fail(where + "." + key + " must be a number");
-    }
-}
-
-void checkKey(const std::string& key, const char* field, Context& context)
-{
-    // A zenoh key outside the allowed charset fails SILENTLY -- the publisher
-    // refuses and nothing subscribes, and a query goes to nobody. Checking here
-    // turns a typo into a startup error rather than a topic nobody can reach.
-    if (const std::string problem = pub_sub::topicKeyProblem(key); !problem.empty())
-    {
-        context.fail(std::string(field) + " ('" + key + "'): " + problem);
-    }
-}
+using node_config::Context;
+using node_config::readString;
+using node_config::readNumber;
 
 void positive(double value, const char* field, Context& context)
 {
@@ -165,12 +112,12 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
         }
     }
 
-    checkKey(out.services.graphInfoKey, "services.graph_info_key", context);
-    checkKey(out.services.routeKey, "services.route_key", context);
-    checkKey(out.services.nearestKey, "services.nearest_key", context);
-    checkKey(out.services.trackCatalogKey, "services.track_catalog_key", context);
-    checkKey(out.services.trackDetailKey, "services.track_detail_key", context);
-    checkKey(out.publish.topicPrefix, "publish.topic_prefix", context);
+    node_config::checkTopicKey(out.services.graphInfoKey, "services.graph_info_key", context);
+    node_config::checkTopicKey(out.services.routeKey, "services.route_key", context);
+    node_config::checkTopicKey(out.services.nearestKey, "services.nearest_key", context);
+    node_config::checkTopicKey(out.services.trackCatalogKey, "services.track_catalog_key", context);
+    node_config::checkTopicKey(out.services.trackDetailKey, "services.track_detail_key", context);
+    node_config::checkTopicKey(out.publish.topicPrefix, "publish.topic_prefix", context);
 
     // Two services on one key answer each other's questions: a request goes to
     // whichever queryable replies first, and capnp decodes the wrong reply into

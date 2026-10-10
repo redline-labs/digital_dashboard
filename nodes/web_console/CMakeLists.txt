@@ -28,6 +28,7 @@ add_library(web_console_routes STATIC
 target_include_directories(web_console_routes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(web_console_routes PUBLIC
+    node_config
     core
     spdlog::spdlog
     yaml-cpp::yaml-cpp
@@ -59,6 +60,7 @@ add_executable(web_console_test_node_config
 target_include_directories(web_console_test_node_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(web_console_test_node_config PRIVATE
+    node_config
     core
     spdlog::spdlog
     yaml-cpp::yaml-cpp

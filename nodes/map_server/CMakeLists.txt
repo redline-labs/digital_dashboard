@@ -26,6 +26,7 @@ add_executable(map_server
 
 target_link_libraries(map_server
     PRIVATE
+    node_config
     core
         mbtiles
         # The race-track catalogue, in extra tables inside the same .mbtiles.
@@ -54,6 +55,7 @@ target_include_directories(map_server_test_config PRIVATE ${CMAKE_CURRENT_SOURCE
 
 target_link_libraries(map_server_test_config
     PRIVATE
+    node_config
     core
         zenoh_pub_sub
         spdlog::spdlog

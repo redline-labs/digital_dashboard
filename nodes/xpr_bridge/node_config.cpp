@@ -2,6 +2,8 @@
 
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include <yaml-cpp/yaml.h>
 
 #include <spdlog/spdlog.h>
@@ -17,90 +19,10 @@ namespace xpr_node
 namespace
 {
 
-// Accumulates problems rather than failing on the first, so a config with
-// three mistakes takes one run to fix rather than three.
-struct Context
-{
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
-
-template <typename T>
-void readUint(const YAML::Node& parent, const char* key, T& out, Context& context, const std::string& where)
-{
-    if (!parent[key])
-    {
-        return;
-    }
-
-    try
-    {
-        const auto value = parent[key].as<std::uint64_t>();
-        if (value > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))
-        {
-            context.fail(where + "." + key + ": " + std::to_string(value) + " is out of range");
-            return;
-        }
-        out = static_cast<T>(value);
-    }
-    catch (const YAML::Exception& e)
-    {
-        context.fail(where + "." + key + ": " + e.what());
-    }
-}
-
-void readString(const YAML::Node& parent, const char* key, std::string& out, Context& context,
-                const std::string& where)
-{
-    if (!parent[key])
-    {
-        return;
-    }
-
-    try
-    {
-        out = parent[key].as<std::string>();
-    }
-    catch (const YAML::Exception& e)
-    {
-        context.fail(where + "." + key + ": " + e.what());
-    }
-}
-
-void readBool(const YAML::Node& parent, const char* key, bool& out, Context& context,
-              const std::string& where)
-{
-    if (!parent[key])
-    {
-        return;
-    }
-
-    try
-    {
-        out = parent[key].as<bool>();
-    }
-    catch (const YAML::Exception& e)
-    {
-        context.fail(where + "." + key + ": " + e.what());
-    }
-}
-
-void checkTopicKey(const std::string& key, const char* where, Context& context)
-{
-    // Checked here rather than at the publisher, because a bad character does
-    // not fail loudly on the bus -- `*` and `?` are rejected by zenoh outright
-    // and `@` makes a segment verbatim, so a topic containing one is simply
-    // never seen by any wildcard subscriber.
-    if (const std::string problem = pub_sub::topicKeyProblem(key); !problem.empty())
-    {
-        context.fail(std::string(where) + ": " + problem);
-    }
-}
+using node_config::Context;
+using node_config::readUint;
+using node_config::readString;
+using node_config::readBool;
 
 void parseRadio(const YAML::Node& node, RadioConfig& out, Context& context)
 {
@@ -188,8 +110,8 @@ void parsePublish(const YAML::Node& node, PublishConfig& out, Context& context)
         context.fail("publish.status_interval_ms: must not be zero");
     }
 
-    checkTopicKey(out.topicPrefix, "publish.topic_prefix", context);
-    checkTopicKey(out.statusKey, "publish.status_key", context);
+    node_config::checkTopicKey(out.topicPrefix, "publish.topic_prefix", context);
+    node_config::checkTopicKey(out.statusKey, "publish.status_key", context);
 }
 
 } // namespace

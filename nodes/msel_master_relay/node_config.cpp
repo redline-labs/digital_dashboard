@@ -2,6 +2,8 @@
 
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include "msel/protocol.h"
 #include "pub_sub/topic_key.h"
 
@@ -19,18 +21,7 @@ namespace msel_node
 namespace
 {
 
-// Errors accumulate rather than stopping at the first, so one run finds every
-// typo in a file rather than one per run.
-struct Context
-{
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
+using node_config::Context;
 
 template <typename T>
 void read_uint(const YAML::Node& parent, const char* key, T& out, Context& context)
@@ -112,20 +103,6 @@ void reject_unknown_keys(const YAML::Node& node, const std::vector<std::string>&
     }
 }
 
-void check_topic_key(const std::string& value, const char* key, Context& context)
-{
-    if (value.empty())
-    {
-        context.fail(fmt::format("{}: cannot be empty", key));
-        return;
-    }
-    const std::string problem = pub_sub::topicKeyProblem(value);
-    if (!problem.empty())
-    {
-        context.fail(fmt::format("{}: '{}' {}", key, value, problem));
-    }
-}
-
 } // namespace
 
 bool parse_node_config(const std::string& yaml, NodeConfig& out)
@@ -163,9 +140,9 @@ bool parse_node_config(const std::string& yaml, NodeConfig& out)
     read_uint(root, "command_timeout_ms", out.commandTimeoutMs, context);
     read_uint(root, "status_interval_ms", out.statusIntervalMs, context);
 
-    check_topic_key(out.rxKey, "rx_key", context);
-    check_topic_key(out.txKey, "tx_key", context);
-    check_topic_key(out.topicPrefix, "topic_prefix", context);
+    node_config::checkTopicKey(out.rxKey, "rx_key", context);
+    node_config::checkTopicKey(out.txKey, "tx_key", context);
+    node_config::checkTopicKey(out.topicPrefix, "topic_prefix", context);
 
     if (out.rxKey == out.txKey)
     {

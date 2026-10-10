@@ -26,6 +26,7 @@ target_include_directories(state_estimator_core PUBLIC ${CMAKE_CURRENT_SOURCE_DI
 
 target_link_libraries(state_estimator_core
     PUBLIC
+    node_config
         vehicle_estimator
         deflec
         calibration_store

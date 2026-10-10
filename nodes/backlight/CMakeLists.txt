@@ -12,6 +12,7 @@ add_executable(backlight
 )
 
 target_link_libraries(backlight PRIVATE
+    node_config
     core
     spdlog::spdlog
     cxxopts::cxxopts
@@ -33,6 +34,7 @@ add_executable(backlight_test_node_config
 target_include_directories(backlight_test_node_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(backlight_test_node_config PRIVATE
+    node_config
     zenoh_pub_sub
     spdlog::spdlog
     yaml-cpp::yaml-cpp

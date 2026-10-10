@@ -2,6 +2,8 @@
 
 #include "node_config.h"
 
+#include "node_config/reader.h"
+
 #include "can/channel_id.h"
 
 #include <spdlog/spdlog.h>
@@ -18,18 +20,7 @@ namespace can_bridge
 namespace
 {
 
-// Errors accumulate rather than stopping at the first, so one run finds every
-// typo in a file rather than one per run.
-struct Context
-{
-    bool ok { true };
-
-    void fail(const std::string& message)
-    {
-        SPDLOG_ERROR("[config] {}", message);
-        ok = false;
-    }
-};
+using node_config::Context;
 
 template <typename T>
 void read_uint(const YAML::Node& parent, const char* key, T& out, Context& context,
