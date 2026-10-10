@@ -7,6 +7,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 REFLECT_ENUM(ValueReadoutAlignment,
@@ -28,7 +29,7 @@ REFLECT_STRUCT(ValueReadoutConfig_t,
 	    "Label", "Label text to display"),
 	(ValueReadoutAlignment, alignment, ValueReadoutAlignment::left,
 	    "Text Alignment", "Horizontal alignment of the text"),
-	(std::string, zenoh_key, "",
+	(pub_sub::topic_key_t, zenoh_key, "",
 	    "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),

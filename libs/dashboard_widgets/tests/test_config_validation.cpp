@@ -316,6 +316,37 @@ void testWellFormedColoursAreAccepted()
     }
 }
 
+// Keys are checked by TYPE. Matching on names like `*zenoh_key` never saw
+// carplay's video_key, so a key the publisher would refuse loaded silently and
+// the widget showed nothing.
+void testKeysAreCheckedWhateverTheyAreCalled()
+{
+    const auto issues = issuesFor(R"(
+widgets:
+  - type: carplay
+    config:
+      video_key: "nodes/carplay/@video"
+  - type: map
+    config:
+      tile_zenoh_key: "map/tile*"
+)");
+
+    const Issue* video = find(issues, "widgets[0].config.video_key");
+    check(video != nullptr && video->severity == Issue::Severity::error &&
+              video->message.find("not a usable zenoh key") != std::string::npos,
+          "a bad key not named like one is refused, got:" + dump(issues));
+    check(find(issues, "widgets[1].config.tile_zenoh_key") != nullptr,
+          "and a bad service key is refused the same way");
+
+    check(!hasError(issuesFor(R"(
+widgets:
+  - type: value_readout
+    config:
+      zenoh_key: ""
+)")),
+          "an empty key is unbound, not an error");
+}
+
 // ---------------------------------------------------------------- window lists
 
 void testAValidWindowListIsSilent()
@@ -778,6 +809,7 @@ int main()
     testNestedStructsAreWalked();
     testMalformedColoursAreReported();
     testWellFormedColoursAreAccepted();
+    testKeysAreCheckedWhateverTheyAreCalled();
 
     testAValidWindowListIsSilent();
     testWindowListPathsNameTheWindow();

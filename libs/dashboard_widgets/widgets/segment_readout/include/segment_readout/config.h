@@ -8,6 +8,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 // Which DSEG face the readout is set in. Seven-segment can only render digits;
@@ -35,7 +36,7 @@ REFLECT_ENUM(SegmentCaptionPosition,
 // the live value over the top, in the same face at the same position, so the two
 // line up cell for cell.
 REFLECT_STRUCT(SegmentReadoutConfig_t,
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),

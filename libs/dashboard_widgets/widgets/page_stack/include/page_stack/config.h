@@ -9,11 +9,12 @@
 #include "dashboard/page_command.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 // A bus input that changes the page: when `expression` over the messages on
 // `zenoh_key` fires (see trigger_edge_t), `action` is applied to this stack.
 REFLECT_STRUCT(page_trigger_t,
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Topic to watch"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::GrayhillButtons,
         "Schema Type", "Schema of the messages on that topic"),

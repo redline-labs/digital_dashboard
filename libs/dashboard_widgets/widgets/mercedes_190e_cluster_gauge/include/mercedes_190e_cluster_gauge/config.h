@@ -6,6 +6,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(sub_gauge_config_t,
@@ -13,7 +14,7 @@ REFLECT_STRUCT(sub_gauge_config_t,
         "Minimum Value", "Reading at the empty end of the sweep"),
     (float, max_value, 100.0,
         "Maximum Value", "Reading at the full end of the sweep"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),

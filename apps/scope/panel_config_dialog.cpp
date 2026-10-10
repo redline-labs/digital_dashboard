@@ -90,6 +90,13 @@ QString elementLabel(const Item& item, std::size_t index)
                     fallback = QString::fromStdString(field);
                 }
             }
+            else if constexpr (helpers::StringLeaf<F> && !std::is_same_v<F, helpers::Color>)
+            {
+                if (fallback.isEmpty() && !field.empty())
+                {
+                    fallback = QString::fromStdString(field.str());
+                }
+            }
         });
     if (!label.isEmpty())
     {
@@ -184,6 +191,10 @@ struct FormBuilder
         else if constexpr (std::is_same_v<F, helpers::Color>)
         {
             return makeColorEditor(field);
+        }
+        else if constexpr (helpers::StringLeaf<F>)
+        {
+            return makeRuledEditor(field);
         }
         else if constexpr (std::is_same_v<F, std::string>)
         {
@@ -291,6 +302,28 @@ struct FormBuilder
             static_assert(sizeof(F) == 0, "panel_config_dialog: unsupported field type.");
             return nullptr;
         }
+    }
+
+    // A string with rules of its own -- a topic or service key. Marked red with
+    // the reason as its tooltip while the text breaks them; the workspace
+    // validator refuses the same text at load, by the same rule.
+    template <typename F>
+    QWidget* makeRuledEditor(F& field) const
+    {
+        auto* edit = new QLineEdit(QString::fromStdString(field.str()), parent);
+        edit->setPlaceholderText(QString::fromUtf8(F::kFormatHint.data(),
+                                                   static_cast<qsizetype>(F::kFormatHint.size())));
+        const auto recheck = [edit, &field](const QString& text)
+        {
+            field = F{text.toStdString()};
+            const std::string problem = F::problem(field.str());
+            edit->setStyleSheet(problem.empty() ? QString()
+                                                : QStringLiteral("border: 1px solid #C0392B;"));
+            edit->setToolTip(QString::fromStdString(problem));
+        };
+        recheck(edit->text());
+        QObject::connect(edit, &QLineEdit::textChanged, parent, recheck);
+        return edit;
     }
 
     QWidget* makeColorEditor(helpers::Color& field) const

@@ -37,7 +37,7 @@ here, so the two halves cannot disagree as they once did.
 | `pub_sub/dynamic_service_call.h` | `callService()` / `callServiceBlocking()`: request from JSON, schema known by name, every reply collected. |
 | `pub_sub/session_manager.h` | `SessionManager`: `getOrCreate()`, `insertConfig()`, `zid()`, `isOpen()`, `shutdown()`. |
 | `pub_sub/node_identity.h` | `NodeIdentity`: one liveliness token naming this process. Declare one in every `main()`. |
-| `pub_sub/topic_key.h` | The key charset, `isValidTopicKey`, `topicKeyProblem`, mangling, and the `@redline/...` key spaces. |
+| `pub_sub/topic_key.h` | The key charset, `isValidTopicKey`, `topicKeyProblem`, the config key types `topic_key_t`/`service_key_t`, mangling, and the `@redline/...` key spaces. |
 | `pub_sub/topic_directory.h` | `TopicDirectory`, `NodeDirectory`, `ServiceDirectory`: what is advertised, kept current. |
 | `pub_sub/topic_discovery.h` | `observeTopics()` and `readOneSample()`: what is flowing, over a window. |
 | `pub_sub/timestamp.h` | `ntp64ToUnixNanos()` and its inverse, with what the clock does and does not mean. |
@@ -106,7 +106,10 @@ accident that `operator new` aligns.
 **Keys** are `[A-Za-z0-9_-/]`, checked with `topicKeyProblem()` in the editor,
 at config load and in the publisher. `%` is the mangling separator, `@` makes a
 segment invisible to every wildcard, and `* $ ? #` fail to construct.
-`NodeIdentity` refuses a name that is not a usable segment.
+`NodeIdentity` refuses a name that is not a usable segment. A reflected config
+declares a key as `pub_sub::topic_key_t` (or `service_key_t` for a service),
+never as a plain string: the type is what makes the config validator, the JSON
+patch path and both config forms check it, whatever the field is called.
 
 **Liveliness.** Three key spaces, `@redline/adv`, `@redline/node` and
 `@redline/svc`, join on the zid, and every parser accepts extra trailing

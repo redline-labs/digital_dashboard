@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "helpers/color.h"
 #include "config_codec/config_limits.h"
 
@@ -27,7 +28,7 @@ REFLECT_STRUCT(SparklineConfig_t,
         "Units Font Size", "Font size for the units label"),
     (uint16_t, update_rate, 30,
         "Update Rate (Hz)", "Graph update rate in Hertz"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),

@@ -443,8 +443,27 @@ void testEveryShippedKeyRoundTrips()
 
 }  // namespace
 
+// The config-side key types. Empty is valid -- an unbound widget -- and
+// anything topicKeyProblem refuses is refused with the value-following phrasing
+// the validator and the JSON patch path both print after the quoted key.
+void testConfigKeyTypes()
+{
+    expect(pub_sub::topic_key_t::problem("").empty(), "an empty key is unbound, not invalid");
+    expect(pub_sub::topic_key_t::problem("vehicle/engine/rpm").empty(), "a good key is accepted");
+    expect(pub_sub::topic_key_t::problem("vehicle/@rpm").starts_with("is not a usable zenoh key: "),
+           "a bad key says why, phrased to follow the quoted value");
+    expect(pub_sub::service_key_t::problem("map/tile%").starts_with("is not a usable zenoh key"),
+           "a service key obeys the same charset");
+
+    const pub_sub::topic_key_t key = "vehicle/speed";
+    const std::string& as_string = key;
+    expect(as_string == "vehicle/speed" && key == std::string_view("vehicle/speed"),
+           "a key reads as the string it holds");
+}
+
 int main()
 {
+    testConfigKeyTypes();
     testOrdinaryKeysAreValid();
     testStructuralProblemsAreRejected();
     testTheReservedCharactersAreRejected();

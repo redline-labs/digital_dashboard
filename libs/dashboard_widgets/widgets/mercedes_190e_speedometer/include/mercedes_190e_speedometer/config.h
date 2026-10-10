@@ -6,6 +6,7 @@
 #include <vector>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 // Widget-specific configuration structs
@@ -14,7 +15,7 @@ REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,
         "Odometer Reading", "Starting reading for the six-digit odometer"),
     (uint16_t, max_speed, 125,
         "Maximum Speed", "Full-scale reading at the end of the dial"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Speed Zenoh Key", "Zenoh topic key the road speed is read from"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Speed Schema Type", "Data schema type for the speed subscription"),
@@ -22,7 +23,7 @@ REFLECT_STRUCT(Mercedes190ESpeedometerConfig_t,
         "Speed Expression", "Expression evaluated against the speed message, in the dial's own units"),
     (std::string, odometer_expression, "",
         "Odometer Expression", "Expression evaluated against the odometer message"),
-    (std::string, odometer_zenoh_key, "",
+    (pub_sub::topic_key_t, odometer_zenoh_key, "",
         "Odometer Zenoh Key", "Zenoh topic key the odometer reading is read from"),
     (pub_sub::schema_type_t, odometer_schema_type, pub_sub::schema_type_t::VehicleOdometer,
         "Odometer Schema Type", "Data schema type for the odometer subscription"),

@@ -672,18 +672,6 @@ std::vector<Issue> validate_app_config(const YAML::Node& root)
     }
     validateCommands(ctx, issues);
 
-    // Refused outright rather than warned about. Every way a key can be wrong
-    // is a silent failure downstream -- '@' makes the topic invisible to every
-    // wildcard subscription including discovery, '%' cannot be recovered from
-    // an advertisement, and the characters zenoh rejects make the publisher
-    // fail to declare and then quietly send nothing. A config that names one
-    // does not do what it says, so it does not load.
-    for (const pub_sub::TopicKeyIssue& bad : pub_sub::findBadTopicKeys(root))
-    {
-        issues.push_back({Issue::Severity::error, bad.path,
-                          "'" + bad.key + "' is not a usable zenoh key: " + bad.problem});
-    }
-
     return issues;
 }
 

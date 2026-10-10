@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
@@ -14,7 +15,7 @@ REFLECT_STRUCT(Mercedes190ETachometerConfig_t,
         "Redline RPM", "Where the red zone begins; clamped to at most the maximum"),
     (bool, show_clock, true,
         "Show Clock", "Draw the analogue clock inset in the dial face"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
         "Schema Type", "Data schema type for the subscription"),

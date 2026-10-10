@@ -6,6 +6,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(MotecC125TachometerConfig_t,
@@ -17,7 +18,7 @@ REFLECT_STRUCT(MotecC125TachometerConfig_t,
     // so this saved as the control byte 0x05 rather than the number 5.
     (uint16_t, center_page_digit, 5,
         "Center Digit", "The large digit in the middle of the dial; the gear on a real display"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
         "Schema Type", "Data schema type for the subscription"),

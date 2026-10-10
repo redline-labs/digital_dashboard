@@ -8,6 +8,7 @@
 #include "config_codec/config_limits.h"
 #include "helpers/color.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 #include <vector>
 
@@ -25,7 +26,7 @@ REFLECT_STRUCT(Mercedes190ETelltaleConfig_t,
         "Warning Color", "Colour of the lamp while the condition holds"),
     (helpers::Color, normal_color, "#333333",
         "Normal Color", "Colour of the lamp the rest of the time"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),

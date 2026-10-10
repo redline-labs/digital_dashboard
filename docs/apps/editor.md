@@ -78,8 +78,8 @@ drawn as an inset group with its own rows. Each row's label carries the field's
 description as a tooltip. Nothing changes on the canvas until you press
 **Apply**, which writes every field back to the widget in one step.
 
-Fields whose name is `zenoh_key` or ends in `_zenoh_key` are validated as you
-type: a malformed key turns the field red, the reason appears as a tooltip and
+Zenoh key fields -- topic and service keys, whatever the field is called --
+are validated as you type: a malformed key turns the field red, the reason appears as a tooltip and
 under the form, and Apply stays disabled until it is fixed. An empty key is
 allowed, since that is how an unbound widget is written. No other field is
 refused by the panel. Instead, the value you typed is stored as you typed it,

@@ -5,6 +5,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 #include <string>
 #include <vector>
@@ -45,7 +46,7 @@ REFLECT_ENUM(trace_display_t,
 // leaving it editable is what makes `temperatureCelsius * 1.8 + 32` work with
 // no new UI at all.
 REFLECT_STRUCT(signal_binding_t,
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
         "Schema Type", "Data schema the topic is published with"),

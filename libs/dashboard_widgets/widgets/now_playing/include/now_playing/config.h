@@ -6,6 +6,7 @@
 #include <vector>
 #include "helpers/color.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 // Now-playing widget: renders media metadata published by the carplay driver
@@ -16,7 +17,7 @@
 // lasts and hands it back to the music afterwards, which is what the head unit
 // in the car does: one panel, and whatever matters most at the time is in it.
 REFLECT_STRUCT(NowPlayingConfig_t,
-    (std::string, zenoh_key, "nodes/carplay/nowplaying",
+    (pub_sub::topic_key_t, zenoh_key, "nodes/carplay/nowplaying",
         "Zenoh Key", "Zenoh topic publishing CarPlayNowPlaying metadata"),
     (bool, show_album_art, true,
         "Show Album Art", "Draw album artwork when the phone provides it"),
@@ -32,7 +33,7 @@ REFLECT_STRUCT(NowPlayingConfig_t,
     // Call takeover.
     (bool, show_calls, true,
         "Show Calls", "Let an active phone call take the widget over"),
-    (std::string, call_zenoh_key, "nodes/carplay/call",
+    (pub_sub::topic_key_t, call_zenoh_key, "nodes/carplay/call",
         "Call Zenoh Key", "Zenoh topic publishing CarPlayCall state"),
     (helpers::Color, call_accent_color, "#39B54A",
         "Call Accent Color", "Color of the call badge and status text"),

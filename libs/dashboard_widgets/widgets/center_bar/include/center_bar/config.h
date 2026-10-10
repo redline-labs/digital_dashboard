@@ -8,6 +8,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 // A horizontal bar whose origin is the middle, not the left edge: the marker
@@ -15,7 +16,7 @@
 // MoTeC gain/loss strip -- how far ahead or behind the reference lap you are --
 // and anything else that is naturally signed around a target.
 REFLECT_STRUCT(CenterBarConfig_t,
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::VehicleSpeed,
         "Schema Type", "Data schema type for the subscription"),

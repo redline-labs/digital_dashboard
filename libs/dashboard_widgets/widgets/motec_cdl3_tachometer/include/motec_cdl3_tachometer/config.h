@@ -5,12 +5,13 @@
 #include <string>
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 REFLECT_STRUCT(MotecCdl3TachometerConfig_t,
     (uint32_t, max_rpm, 6000,
         "Maximum RPM", "Full-scale reading; sets how many segments the bar spans"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
         "Schema Type", "Data schema type for the subscription"),

@@ -5,9 +5,9 @@
 #include <string_view>
 #include <vector>
 
+#include "helpers/string_leaf.h"
 #include "pub_sub/node_key.h"
 
-#include <yaml-cpp/yaml.h>
 
 namespace pub_sub
 {
@@ -181,28 +181,77 @@ bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::str
 bool parseAdvertiseKey(std::string_view advertised, std::string& topic, std::string& schema,
                        std::string& zid);
 
-// One bad key found in a config tree: where it is, and what is wrong with it.
-struct TopicKeyIssue
+namespace detail
 {
-    std::string path;     // e.g. "widgets[3].config.zenoh_key"
-    std::string key;      // the offending value
-    std::string problem;  // from topicKeyProblem()
+
+// A zenoh key in a config: a string on the wire, checked by type wherever a
+// config is loaded, patched or edited (helpers::StringLeaf). Empty is valid and
+// means unbound -- that is how a widget nobody has wired up yet is spelled.
+//
+// Converts to `const std::string&` implicitly, so code that hands a key to the
+// bus does not have to unwrap it; the type exists for the codecs and the forms,
+// which are the places a bad key has to be caught by name.
+template <typename Tag>
+class ConfigKey
+{
+  public:
+    ConfigKey() = default;
+    ConfigKey(const char* text) : value_(text) {}
+    ConfigKey(std::string text) : value_(std::move(text)) {}
+
+    const std::string& str() const { return value_; }
+    operator const std::string&() const { return value_; }
+    operator std::string_view() const { return value_; }
+    bool empty() const { return value_.empty(); }
+    void clear() { value_.clear(); }
+    const char* c_str() const { return value_.c_str(); }
+
+    // Exact overloads, not one string_view: with the conversions above, a
+    // string_view comparison is ambiguous against std::string's own.
+    bool operator==(const ConfigKey&) const = default;
+    bool operator==(const std::string& other) const { return value_ == other; }
+    bool operator==(const char* other) const { return value_ == other; }
+
+    // Logs as the key itself.
+    friend std::string_view format_as(const ConfigKey& key) { return key.value_; }
+
+    static constexpr std::string_view kTypeName = Tag::kTypeName;
+    static constexpr std::string_view kFormatHint = "segment/segment, [A-Za-z0-9_-/]";
+    static std::string problem(std::string_view text)
+    {
+        if (text.empty())
+        {
+            return {};
+        }
+        const std::string why = topicKeyProblem(text);
+        return why.empty() ? std::string() : "is not a usable zenoh key: " + why;
+    }
+
+  private:
+    std::string value_;
 };
 
-// Walks a parsed YAML tree and reports every zenoh key that would be refused.
-//
-// Lives here rather than in config_codec's validator because that one is
-// deliberately free of any dependency beyond reflection and yaml -- it should
-// not learn what a zenoh key is. Each application converts these into its own
-// Issue type, so a bad key is reported with a field path alongside every other
-// config problem rather than surfacing much later as a publisher that silently
-// refused to start.
-//
-// Keys are recognised by field name, the same convention the editor's
-// properties panel uses: `zenoh_key`, or a prefixed variant such as
-// `odometer_zenoh_key` where a widget binds two streams. An empty value is
-// skipped -- that is how an unbound widget is spelled.
-std::vector<TopicKeyIssue> findBadTopicKeys(const YAML::Node& root);
+struct TopicKeyTag
+{
+    static constexpr std::string_view kTypeName = "topic_key";
+};
+struct ServiceKeyTag
+{
+    static constexpr std::string_view kTypeName = "service_key";
+};
+
+}  // namespace detail
+
+// A key a config subscribes or publishes on.
+using topic_key_t = detail::ConfigKey<detail::TopicKeyTag>;
+
+// A key a config sends queries to (a ZenohService). The same charset -- its
+// liveliness token mangles it exactly as a topic's -- but a distinct type, so
+// the forms and describe() do not offer it where a topic belongs.
+using service_key_t = detail::ConfigKey<detail::ServiceKeyTag>;
+
+static_assert(helpers::StringLeaf<topic_key_t>);
+static_assert(helpers::StringLeaf<service_key_t>);
 
 }  // namespace pub_sub
 

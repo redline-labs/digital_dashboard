@@ -28,7 +28,6 @@
 #include <functional>
 #include <limits>
 
-#include "pub_sub/topic_key.h"
 #include "reflection/reflection.h"
 #include "helpers/color.h"
 #include "spdlog/spdlog.h"
@@ -296,29 +295,13 @@ void PropertiesPanel::setCanvas(Canvas* canvas)
 
 namespace
 {
-    // Marks a QLineEdit that holds a zenoh key, so the page can validate it
-    // after the form is built without the form knowing anything about zenoh.
-    constexpr const char* kZenohKeyProperty = "redlineZenohKey";
+    // Set on the QLineEdit of every string-leaf field that has rules of its own
+    // (a zenoh key, today): empty when the text is acceptable, otherwise the
+    // reason it is not. The editor keeps it current as the text changes, so
+    // the page can collect problems without knowing what any field is.
+    constexpr const char* kFieldProblemProperty = "redlineFieldProblem";
 
-    // Which string fields are zenoh keys.
-    //
-    // Matched on the field name rather than declared, because the name is
-    // already the convention: every one is `zenoh_key` or a prefixed variant
-    // like `odometer_zenoh_key` where a widget binds two streams. A field that
-    // is a key but not named like one would go unchecked here -- it would still
-    // be refused by the publisher and by config validation, so the cost is a
-    // late error rather than a wrong one.
-    bool isZenohKeyField(const QString& path)
-    {
-        // Only the last component: `traces[0].zenoh_key` is a key, but a nested
-        // struct that merely lives under one is not.
-        const qsizetype dot = path.lastIndexOf('.');
-        const QString leaf = dot < 0 ? path : path.mid(dot + 1);
-        return leaf == QLatin1String("zenoh_key") || leaf.endsWith(QLatin1String("_zenoh_key"));
-    }
-
-    // Validates every tagged field on a page, marks the bad ones, and reports
-    // what is wrong.
+    // Reports every rule-checked field on a page that currently has a problem.
     //
     // Live-and-blocking rather than refusing keystrokes: a QValidator that
     // rejected '@' outright would silently swallow the key and leave someone
@@ -326,39 +309,20 @@ namespace
     // field turns red, the reason is visible while they are still looking at
     // it, and Apply is unavailable until it is fixed -- so nothing invalid can
     // reach a config, but nothing is mysterious either.
-    QStringList validateZenohKeyFields(QWidget* page)
+    QStringList fieldProblems(QWidget* page)
     {
         QStringList problems;
-
         for (QLineEdit* line : page->findChildren<QLineEdit*>())
         {
-            if (!line->property(kZenohKeyProperty).toBool())
+            const QString problem = line->property(kFieldProblemProperty).toString();
+            if (problem.isEmpty())
             {
                 continue;
             }
-
-            const std::string key = line->text().toStdString();
-
-            // An empty key is not an error here. It is how an unbound widget is
-            // spelled, and half the shipped configs have one; refusing it would
-            // make the panel unusable for any widget you have not wired up yet.
-            const std::string problem = key.empty() ? std::string() : pub_sub::topicKeyProblem(key);
-
-            if (problem.empty())
-            {
-                line->setStyleSheet(QString());
-                line->setToolTip(QString());
-                continue;
-            }
-
-            line->setStyleSheet("border: 1px solid #C0392B; background: #2B1A18;");
-            line->setToolTip(QString::fromStdString(problem));
-
             QString name = line->objectName();
             name.remove(0, QString("field:").size());
-            problems << QString("%1: %2").arg(name, QString::fromStdString(problem));
+            problems << QString("%1: %2").arg(name, problem);
         }
-
         return problems;
     }
 
@@ -399,18 +363,36 @@ namespace
             line->setObjectName(QString("field:%1").arg(path));
             constrainEditorWidth(line);
 
-            // Tagged rather than wrapped. Wrapping the line edit in a container
-            // with a message label underneath would be the obvious way to show
-            // a per-field error, but readLeafFromWidget() finds a string field
-            // by qobject_cast<QLineEdit*> on the editor itself -- so wrapping
-            // would silently stop every string field being read back. The tag
-            // lets the page find these afterwards and validate them without
-            // changing the form's shape.
-            if (isZenohKeyField(path))
-            {
-                line->setProperty(kZenohKeyProperty, true);
-            }
+            return line;
+        }
+        else if constexpr (helpers::StringLeaf<FieldType> && !std::is_same_v<FieldType, helpers::Color>)
+        {
+            // A string with rules of its own -- a topic or service key. Chosen
+            // by the field's TYPE: matching on names like `*zenoh_key` missed
+            // every key named otherwise, carplay's six among them.
+            auto* line = new QLineEdit(parent);
+            line->setMinimumHeight(24);
+            line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            line->setText(QString::fromStdString(value.str()));
+            line->setPlaceholderText(QString::fromUtf8(FieldType::kFormatHint.data(),
+                                                       static_cast<qsizetype>(FieldType::kFormatHint.size())));
+            line->setObjectName(QString("field:%1").arg(path));
+            constrainEditorWidth(line);
 
+            // Tagged rather than wrapped: readLeafInto() finds the field by
+            // qobject_cast<QLineEdit*> on the editor itself, so a container
+            // with a message label would stop it being read back. The page
+            // reads the tag to block Apply.
+            const auto recheck = [line](const QString& text)
+            {
+                const std::string problem = FieldType::problem(text.toStdString());
+                line->setProperty(kFieldProblemProperty, QString::fromStdString(problem));
+                line->setStyleSheet(problem.empty() ? QString()
+                                                    : QString("border: 1px solid #C0392B; background: #2B1A18;"));
+                line->setToolTip(QString::fromStdString(problem));
+            };
+            recheck(line->text());
+            QObject::connect(line, &QLineEdit::textChanged, line, recheck);
             return line;
         }
         else if constexpr (std::is_same_v<FieldType, helpers::Color>)
@@ -798,6 +780,10 @@ namespace
         {
             if (auto* w = qobject_cast<QLineEdit*>(editor)) out = w->text().toStdString();
         }
+        else if constexpr (helpers::StringLeaf<FieldType> && !std::is_same_v<FieldType, helpers::Color>)
+        {
+            if (auto* w = qobject_cast<QLineEdit*>(editor)) out = FieldType{w->text().toStdString()};
+        }
         else if constexpr (std::is_same_v<FieldType, helpers::Color>)
         {
             // A container: the line edit, then the picker button.
@@ -988,7 +974,7 @@ namespace
 
         const auto revalidate = [page, problemsLabel, applyBtn]()
         {
-            const QStringList problems = validateZenohKeyFields(page);
+            const QStringList problems = fieldProblems(page);
             problemsLabel->setVisible(!problems.isEmpty());
             problemsLabel->setText(problems.join('\n'));
             applyBtn->setEnabled(problems.isEmpty());
@@ -999,7 +985,9 @@ namespace
 
         for (QLineEdit* line : page->findChildren<QLineEdit*>())
         {
-            if (line->property(kZenohKeyProperty).toBool())
+            // Every rule-checked field, problem or not: its own recheck runs
+            // first (connected when it was built), then this.
+            if (line->property(kFieldProblemProperty).isValid())
             {
                 QObject::connect(line, &QLineEdit::textChanged, page,
                                  [revalidate](const QString&) { revalidate(); });

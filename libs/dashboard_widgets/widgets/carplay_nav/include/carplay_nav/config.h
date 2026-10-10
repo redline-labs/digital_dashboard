@@ -7,6 +7,7 @@
 
 #include "helpers/color.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 #include "config_codec/config_limits.h"
 
 // Turn-by-turn guidance from CarPlay. Like now_playing, this is purely a
@@ -14,7 +15,7 @@
 // and no video surface, which is the whole point of the node publishing route
 // guidance separately from the projected screen.
 REFLECT_STRUCT(CarPlayNavConfig_t,
-    (std::string, zenoh_key, "nodes/carplay/nav",
+    (pub_sub::topic_key_t, zenoh_key, "nodes/carplay/nav",
         "Zenoh Key", "Zenoh topic publishing CarPlayNav guidance"),
     (bool, imperial_units, false,
         "Imperial Units", "Show feet and miles instead of metres and kilometres"),

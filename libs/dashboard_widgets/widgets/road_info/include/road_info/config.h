@@ -7,6 +7,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 // What road we are on, from nodes/map_match.
 //
@@ -15,7 +16,7 @@
 // as a bad conversion, which throws out of the YAML decoder and takes the whole
 // layout with it. Nothing in the type says so and it fails at load time.
 REFLECT_STRUCT(RoadInfoConfig_t,
-    (std::string, horizon_zenoh_key, "nodes/map_match/horizon",
+    (pub_sub::topic_key_t, horizon_zenoh_key, "nodes/map_match/horizon",
         "Horizon Zenoh Key", "Topic carrying the electronic horizon from nodes/map_match"),
     (pub_sub::schema_type_t, horizon_schema_type, pub_sub::schema_type_t::MapHorizon,
         "Horizon Schema Type", "Schema of the horizon topic"),

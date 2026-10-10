@@ -8,6 +8,7 @@
 #include "map_render/style.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 #include <cmath>
 #include <cstdint>
@@ -55,7 +56,7 @@ REFLECT_ENUM(MapPanelOrientation_t,
 // fields in this panel's reflected config that the YAML encoder writes, the
 // agent interface advertises as settable and the panel silently ignores.
 REFLECT_STRUCT(map_binding_t,
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to. Empty means this role is unbound"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::GsofLatLongHeight,
         "Schema Type", "Data schema the topic is published with"),

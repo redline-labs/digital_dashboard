@@ -2,6 +2,7 @@
 #define SCOPE_VIDEO_CONFIG_H_
 
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 #include <string>
 #include <vector>
@@ -9,7 +10,7 @@
 REFLECT_STRUCT(VideoPanelConfig_t,
     (std::string, title, "Video",
         "Title", "Shown on the panel's title bar"),
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Topic carrying the encoded video stream. Empty until a stream is bound"),
 
     // ITS OWN RETENTION, not the workspace's history_seconds.

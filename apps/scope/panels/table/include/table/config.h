@@ -4,6 +4,7 @@
 #include "config_codec/config_limits.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 #include <cstdint>
 #include <string>
@@ -49,7 +50,7 @@ REFLECT_ENUM(cell_format_t,
 // panel then silently ignores. A config that accepts a setting it does not
 // implement is worse than two structs that share three field names.
 REFLECT_STRUCT(table_row_t,
-    (std::string, zenoh_key, "",
+    (pub_sub::topic_key_t, zenoh_key, "",
         "Zenoh Key", "Zenoh topic key to subscribe to"),
     (pub_sub::schema_type_t, schema_type, pub_sub::schema_type_t::EngineRpm,
         "Schema Type", "Data schema the topic is published with"),

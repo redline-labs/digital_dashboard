@@ -22,6 +22,7 @@
 #include "helpers/color.h"
 #include "pub_sub/schema_registry.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 #include "map_render/camera_modes.h"
 #include "map_render/projection.h"
@@ -54,7 +55,7 @@ REFLECT_STRUCT(MapConfig_t,
     // is cached as absent and never asked for again.
     (std::vector<std::string>, overlay_tilesets, {},
         "Overlay Tilesets", "Extra tilesets drawn over the base one, e.g. 'tracks'. Each is an independent archive with its own zoom range"),
-    (std::string, tile_zenoh_key, "map/tile",
+    (pub_sub::service_key_t, tile_zenoh_key, "map/tile",
         "Tile Zenoh Key", "Service key map_server answers tile requests on"),
     (uint16_t, request_timeout_ms, 4000,
         "Request Timeout (ms)", "How long to wait for a tile before giving up on it"),
@@ -109,7 +110,7 @@ REFLECT_STRUCT(MapConfig_t,
     (uint16_t, track_points, 600,
         "Track Points", "How many positions the trail keeps. 0 disables it"),
 
-    (std::string, position_zenoh_key, "",
+    (pub_sub::topic_key_t, position_zenoh_key, "",
         "Position Zenoh Key", "Topic carrying the vehicle position, e.g. nodes/bd992/position"),
     (pub_sub::schema_type_t, position_schema_type, pub_sub::schema_type_t::GsofLatLongHeight,
         "Position Schema Type", "Schema of the position topic"),
@@ -124,7 +125,7 @@ REFLECT_STRUCT(MapConfig_t,
     (uint32_t, position_stale_after_ms, 0,
         "Position Stale After (ms)", "Grey the vehicle marker when no position arrives for this long; 0 = never"),
 
-    (std::string, highlight_zenoh_key, "",
+    (pub_sub::topic_key_t, highlight_zenoh_key, "",
         "Highlight Zenoh Key", "Topic carrying the matcher's horizon (MapHorizon), e.g. nodes/map_match/horizon. The matched road ahead lights up in the highlight colour. Way ids only survive in tiles at z13 and deeper, so the highlight quietly disappears when zoomed shallower. Empty disables it"),
     (helpers::Color, highlight_color, "#00E5FFB0",
         "Highlight Color", "Colour the matched road is recoloured with"),

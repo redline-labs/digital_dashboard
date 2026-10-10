@@ -8,6 +8,7 @@
 #include "config_codec/config_limits.h"
 #include "dashboard/page_command.h"
 #include "reflection/reflection.h"
+#include "pub_sub/topic_key.h"
 
 // A way off the CarPlay page with no phone connected. The phone's own
 // manufacturer tile is the normal way back to the vehicle's screens, and there
@@ -30,17 +31,17 @@ REFLECT_STRUCT(CarplayReturnButton_t,
 // carplay driver node (nodes/carplay), which owns the USB/iAP2/AirPlay
 // session with the phone. These keys must match the driver's configuration.
 REFLECT_STRUCT(CarplayConfig_t,
-    (std::string, video_key,   "nodes/carplay/video",
+    (pub_sub::topic_key_t, video_key,   "nodes/carplay/video",
         "Video Key", "Zenoh key the driver publishes the phone's H.264/H.265 screen on"),
-    (std::string, audio_key,   "nodes/carplay/audio",
+    (pub_sub::topic_key_t, audio_key,   "nodes/carplay/audio",
         "Audio Key", "Zenoh key the driver publishes phone audio on"),
-    (std::string, mic_key,     "nodes/carplay/mic",
+    (pub_sub::topic_key_t, mic_key,     "nodes/carplay/mic",
         "Microphone Key", "Zenoh key this widget publishes captured microphone audio on, for Siri and calls"),
-    (std::string, input_key,   "nodes/carplay/input",
+    (pub_sub::topic_key_t, input_key,   "nodes/carplay/input",
         "Input Key", "Zenoh key this widget publishes touch events to, to send them to the phone"),
-    (std::string, session_key, "nodes/carplay/session",
+    (pub_sub::topic_key_t, session_key, "nodes/carplay/session",
         "Session Key", "Zenoh key carrying session state: whether a phone is connected and what it is doing"),
-    (std::string, visibility_key, "nodes/carplay/visibility",
+    (pub_sub::topic_key_t, visibility_key, "nodes/carplay/visibility",
         "Visibility Key", "Zenoh key this widget reports whether it is on screen on, so the driver can hand the screen to the car"),
     (uint32_t, session_stale_after_ms, 3000,
         "Session Stale After (ms)", "No session state for this long means no driver: the return button shows"),
