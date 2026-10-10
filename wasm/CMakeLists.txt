@@ -56,8 +56,8 @@ include(${REDLINE_ROOT}/third_party/spdlog.cmake)
 include(${REDLINE_ROOT}/third_party/nlohmann_json.cmake)
 
 # reflection is header-only and INTERFACE. Declared here rather than reached by
-# add_subdirectory(libs/reflection), which would also declare test_reflection and
-# call redline_install() -- neither of which means anything in a browser.
+# add_subdirectory(libs/reflection), which would also declare its test -- which
+# means nothing in a browser.
 add_library(reflection INTERFACE)
 target_include_directories(reflection INTERFACE ${REDLINE_ROOT}/libs/reflection/include)
 

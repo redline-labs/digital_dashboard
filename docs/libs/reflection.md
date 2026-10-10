@@ -82,9 +82,7 @@ Do not put a `uint8_t` in a reflected struct that will be serialised; see
 
 ## Tests
 
-`test_reflection` is built by the library's CMakeLists but is not registered
-with `add_project_test` or `add_test`, so `ctest` does not run it. It is a demo
-that prints field names, labels, descriptions and enum names for a struct using
-all three field forms. The behaviour this library exists for is covered
-downstream by `dashboard_widgets_test_config_roundtrip` and the other
-config_codec users.
+`reflection_test_basics` (unit) pins field order, defaults, labels and the
+fallback for an unlabelled field, nested structs, and enum names both ways. The
+codecs built on top are covered by `dashboard_widgets_test_config_roundtrip`
+and the other config_codec users.

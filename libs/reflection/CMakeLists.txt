@@ -4,16 +4,8 @@ target_include_directories(reflection INTERFACE
     include
 )
 
-# Simple demo executable to exercise the reflection API
-add_executable(test_reflection
-    test_reflection.cpp
-)
-
-target_link_libraries(test_reflection
-    reflection
-)
-
-
-
-# SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
-redline_install(TARGET test_reflection COMPONENT nodes)
+# Field order, labels, nested structs and enum names: the list every config
+# consumer walks.
+add_executable(reflection_test_basics tests/test_basics.cpp)
+target_link_libraries(reflection_test_basics PRIVATE reflection)
+add_project_test(TARGET reflection_test_basics LABELS reflection unit)

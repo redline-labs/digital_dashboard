@@ -14,6 +14,7 @@
 #include "scope/workspace.h"
 
 #include <spdlog/spdlog.h>
+#include <yaml-cpp/yaml.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -70,6 +71,17 @@ void testShippedWorkspacesLoad()
             continue;
         }
         ++found;
+
+        // Nothing to say, warnings included: "unknown key, ignored" is what a
+        // renamed field leaves in a workspace nobody rewrote, and the binding
+        // it named loads silently dropped.
+        std::string issues;
+        for (const auto& issue : scope::validate_workspace(YAML::LoadFile(file.path().string())))
+        {
+            issues += "\n    " + issue.path + ": " + issue.message;
+        }
+        expect(issues.empty(), "shipped workspace " + file.path().filename().string() +
+                                   " validates with no issues:" + issues);
 
         const auto workspace = scope::load_workspace(file.path().string());
         expect(workspace.has_value(),
