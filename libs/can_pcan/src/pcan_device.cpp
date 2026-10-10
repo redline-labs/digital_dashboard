@@ -306,6 +306,17 @@ void PcanDevice::reader_loop()
         if (rc == LIBUSB_ERROR_NO_DEVICE)
         {
             SPDLOG_ERROR("[pcan] the adapter was unplugged");
+            // Said to every open channel. Breaking out alone left each one
+            // reporting itself running while receiving nothing, forever --
+            // a bridge that looked healthy on a dead adapter.
+            std::lock_guard<std::mutex> lock(sinkMutex_);
+            for (RecordSink* sink : sinks_)
+            {
+                if (sink != nullptr)
+                {
+                    sink->on_device_lost();
+                }
+            }
             break;
         }
         if (rc != LIBUSB_SUCCESS)

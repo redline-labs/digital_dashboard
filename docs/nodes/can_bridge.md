@@ -28,7 +28,12 @@ replay. The reverse-engineered UTC protocol and its measurements are in the
 
 One process opens every channel because a PCAN-USB Pro FD is a single USB
 handle serving two CAN channels, and two processes cannot share it. A channel
-that fails to open does not take the others down.
+that fails to open does not take the others down, and it is opened again when
+the adapter appears: one missing at startup, or unplugged while running, is
+retried after a second and then at doubling intervals up to thirty seconds. A
+channel being recorded keeps writing the same trace across the gap. While it is
+gone its status says `open: false` with the reason, and its health check is a
+fault.
 
 ## Running it
 

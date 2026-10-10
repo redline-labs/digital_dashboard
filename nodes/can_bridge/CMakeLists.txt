@@ -4,6 +4,7 @@ project(can_bridge)
 
 add_executable(can_bridge
     main.cpp
+    bridged_channel.cpp
     node_config.cpp
     trc_recorder.cpp
 )
@@ -43,6 +44,25 @@ target_link_libraries(can_bridge_test_config
 )
 
 add_project_test(TARGET can_bridge_test_config LABELS can_bridge unit)
+
+# A channel whose hardware goes away is reported lost, and one opened in its
+# place carries traffic on the same topic. Over the virtual bus and a real
+# zenoh session.
+add_executable(can_bridge_test_reconnect
+    test_reconnect.cpp
+    bridged_channel.cpp
+    trc_recorder.cpp
+)
+target_link_libraries(can_bridge_test_reconnect PRIVATE
+    can
+    can_trc
+    zenoh_pub_sub
+    schemas
+    capnp
+    helpers
+    spdlog::spdlog
+)
+add_project_test(TARGET can_bridge_test_reconnect LABELS can_bridge net)
 
 # The health check each channel's status turns into: every bus state named.
 add_executable(can_bridge_test_channel_health test_channel_health.cpp)

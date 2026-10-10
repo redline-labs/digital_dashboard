@@ -172,12 +172,16 @@ public:
         return sent;
     }
 
-    bool running() const override { return running_; }
+    bool running() const override { return running_ && !lost_; }
 
     // --- traffic ------------------------------------------------------------
 
     Result<void> send(const helpers::CanFrame& frame) override
     {
+        if (lost_)
+        {
+            return not_found(fmt::format("{} was unplugged", id_.toString()));
+        }
         if (!running_)
         {
             return invalid_state(fmt::format("{} is not running", id_.toString()));
@@ -219,7 +223,14 @@ public:
         std::unique_lock<std::mutex> lock(mutex_);
         if (queue_.empty())
         {
-            arrived_.wait_for(lock, timeout, [this] { return !queue_.empty() || !running_; });
+            arrived_.wait_for(lock, timeout,
+                              [this] { return !queue_.empty() || !running_ || lost_; });
+        }
+        // What arrived before the unplug is still handed over; after that the
+        // caller is told, so it can reopen rather than wait on a dead device.
+        if (queue_.empty() && lost_)
+        {
+            return not_found(fmt::format("{} was unplugged", id_.toString()));
         }
 
         size_t count = 0;
@@ -238,6 +249,16 @@ public:
     }
 
     // --- from the device's reader thread ------------------------------------
+
+    void on_device_lost() override
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            lost_ = true;
+            statistics_.state = BusState::Stopped;
+        }
+        arrived_.notify_all();
+    }
 
     void on_record(const Record& record) override
     {
@@ -340,6 +361,9 @@ private:
     Bitrate bitrate_;
     std::atomic<bool> listenOnly_ { false };
     std::atomic<bool> running_ { false };
+    // Set by the device when the adapter is unplugged. Never cleared: a
+    // replugged adapter is a new device, reached by opening the channel again.
+    std::atomic<bool> lost_ { false };
     size_t queueDepth_ { 8192 };
     Statistics statistics_ {};
 };

@@ -36,6 +36,9 @@ class RecordSink
 public:
     virtual ~RecordSink() = default;
     virtual void on_record(const Record& record) = 0;
+    // The adapter was unplugged: nothing more will arrive, and nothing sent
+    // will leave. Called once, from the reader thread, as it exits.
+    virtual void on_device_lost() = 0;
 };
 
 class PcanDevice

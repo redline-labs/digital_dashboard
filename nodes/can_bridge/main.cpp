@@ -24,6 +24,7 @@
 // that exits on the first problem is a bridge that has to be babysat.
 
 #include "cli/interrupt.h"
+#include "bridged_channel.h"
 #include "channel_health.h"
 #include "node_config.h"
 #include "trc_recorder.h"
@@ -56,238 +57,6 @@ namespace
 {
 
 
-
-CanBusState to_schema_state(can::BusState state)
-{
-    switch (state)
-    {
-    case can::BusState::Unknown: return CanBusState::UNKNOWN;
-    case can::BusState::ErrorActive: return CanBusState::ERROR_ACTIVE;
-    case can::BusState::ErrorWarning: return CanBusState::ERROR_WARNING;
-    case can::BusState::ErrorPassive: return CanBusState::ERROR_PASSIVE;
-    case can::BusState::BusOff: return CanBusState::BUS_OFF;
-    case can::BusState::Stopped: return CanBusState::STOPPED;
-    }
-    return CanBusState::UNKNOWN;
-}
-
-// One configured bus: the hardware, the topics, and the thread pumping between
-// them.
-class BridgedChannel
-{
-public:
-    BridgedChannel(can_bridge::ChannelConfig config, std::shared_ptr<can::Channel> channel)
-        : config_(std::move(config))
-        , channel_(std::move(channel))
-    {
-        if (config_.publishRx)
-        {
-            rxPublisher_ = std::make_unique<pub_sub::ZenohPublisher<::CanFrame>>(config_.rxKey);
-        }
-
-        if (!config_.recordTrcPath.empty())
-        {
-            can::trc::BusInfo busInfo;
-            busInfo.bus = config_.recordTrcBus;
-            busInfo.name = config_.name;
-            busInfo.connection = config_.device;
-            busInfo.bitrateBps = config_.bitrateBps;
-            busInfo.dataBitrateBps = config_.dataBitrateBps;
-
-            auto recorder = can_bridge::TrcRecorder::create(config_.recordTrcPath, config_.recordTrcBus,
-                                                busInfo);
-            if (!recorder.has_value())
-            {
-                // Not fatal. A bridge that refused to carry traffic because a
-                // log file could not be opened would be a bridge taken down by
-                // a full disk.
-                SPDLOG_ERROR("[{}] cannot record to '{}': {}", config_.name,
-                             config_.recordTrcPath, recorder.error().message);
-            }
-            else
-            {
-                recorder_ = std::move(*recorder);
-                SPDLOG_INFO("[{}] recording to '{}' as bus {}", config_.name,
-                            config_.recordTrcPath, config_.recordTrcBus);
-            }
-        }
-    }
-
-    ~BridgedChannel() { stop(); }
-
-    BridgedChannel(const BridgedChannel&) = delete;
-    BridgedChannel& operator=(const BridgedChannel&) = delete;
-
-    const can_bridge::ChannelConfig& config() const { return config_; }
-    const std::shared_ptr<can::Channel>& channel() const { return channel_; }
-
-    void start()
-    {
-        if (config_.acceptTx)
-        {
-            txSubscriber_ = std::make_unique<pub_sub::ZenohTypedSubscriber<::CanFrame>>(
-                config_.txKey, [this](::CanFrame::Reader message) { transmit(message); });
-        }
-
-        // Recording needs the receive loop just as much as publishing does, so
-        // a channel with publish_rx off still pumps when it is being recorded.
-        // Without this a `publish_rx: false` channel would produce a trace
-        // containing only the frames the node transmitted.
-        if (config_.publishRx || recorder_)
-        {
-            pumping_ = true;
-            pump_ = std::thread([this] { pump(); });
-        }
-    }
-
-    void stop()
-    {
-        if (pump_.joinable())
-        {
-            pumping_ = false;
-            pump_.join();
-        }
-        txSubscriber_.reset();
-        // After both producers are gone, so the recorder's destructor drains a
-        // queue nothing is still pushing to and the trace ends where the
-        // traffic did.
-        recorder_.reset();
-    }
-
-    // What this channel is doing, for the status topic.
-    void fill_status(CanBridgeChannelStatus::Builder builder) const
-    {
-        builder.setName(config_.name);
-        builder.setDevice(config_.device);
-        builder.setDescription(channel_->description());
-        builder.setOpen(true);
-        builder.setRunning(channel_->running());
-        builder.setListenOnly(channel_->listen_only());
-
-        const auto bitrate = channel_->bitrate();
-        builder.setNominalBps(bitrate.nominalBps);
-        builder.setDataBps(bitrate.dataBps);
-
-        const auto statistics = channel_->statistics();
-        builder.setState(to_schema_state(statistics.state));
-        builder.setRxFrames(statistics.rxFrames);
-        builder.setTxFrames(statistics.txFrames);
-        builder.setRxDropped(statistics.rxDropped);
-        builder.setTxDropped(statistics.txDropped);
-        builder.setErrorFrames(statistics.errorFrames);
-        builder.setBusOffCount(statistics.busOffCount);
-        builder.setRxErrorCounter(statistics.rxErrorCounter);
-        builder.setTxErrorCounter(statistics.txErrorCounter);
-
-        if (recorder_)
-        {
-            builder.setRecordPath(recorder_->path());
-            builder.setRecordedFrames(recorder_->recorded());
-            builder.setRecordDropped(recorder_->dropped());
-        }
-
-        std::lock_guard<std::mutex> lock(errorMutex_);
-        builder.setError(lastError_);
-    }
-
-private:
-    void transmit(::CanFrame::Reader message)
-    {
-        // fromCapnp caps `len` at the payload actually supplied. A publisher
-        // that set `len` larger would otherwise put uninitialised bytes on the
-        // bus.
-        const helpers::CanFrame frame = pub_sub::fromCapnp(message);
-
-        auto result = channel_->send(frame);
-        if (result.has_value() && recorder_)
-        {
-            // Only what actually reached the bus. Recording a frame the
-            // adapter refused would put a message in the trace that was never
-            // on the wire, which is the one thing a trace must not do.
-            recorder_->record_tx(frame);
-        }
-        if (!result.has_value())
-        {
-            note_error(can::to_string(result.error()));
-            // Rate-limited by the fact that a broken bus produces the same
-            // message every time; logging every failure on a bus that is down
-            // would drown everything else.
-            SPDLOG_WARN("[{}] cannot transmit 0x{:X}: {}", config_.name, frame.id,
-                        result.error().message);
-        }
-    }
-
-    void pump()
-    {
-        // A batch, because a busy bus delivers faster than one frame per
-        // wakeup and taking them one at a time turns a burst into a backlog.
-        std::array<helpers::CanFrame, 64> batch;
-
-        while (pumping_)
-        {
-            auto count = channel_->receive(batch, can::Duration { 100 });
-            if (!count.has_value())
-            {
-                note_error(can::to_string(count.error()));
-                SPDLOG_WARN("[{}] receive failed: {}", config_.name, count.error().message);
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                continue;
-            }
-
-            for (size_t i = 0; i < *count; ++i)
-            {
-                // Recorded before published, so the offset written to the trace
-                // is as close to the wire as this process can make it -- a
-                // zenoh put is not slow, but it is not free either.
-                if (recorder_)
-                {
-                    recorder_->record_rx(batch[i]);
-                }
-                if (rxPublisher_)
-                {
-                    publish(batch[i]);
-                }
-            }
-        }
-    }
-
-    void publish(const helpers::CanFrame& frame)
-    {
-        auto& fields = rxPublisher_->fields();
-        pub_sub::toCapnp(frame, fields);
-        fields.setChannel(config_.name);
-        rxPublisher_->put();
-    }
-
-    void note_error(std::string message)
-    {
-        std::lock_guard<std::mutex> lock(errorMutex_);
-        lastError_ = std::move(message);
-    }
-
-    can_bridge::ChannelConfig config_;
-    std::shared_ptr<can::Channel> channel_;
-
-    std::unique_ptr<pub_sub::ZenohPublisher<::CanFrame>> rxPublisher_;
-    std::unique_ptr<pub_sub::ZenohTypedSubscriber<::CanFrame>> txSubscriber_;
-    std::unique_ptr<can_bridge::TrcRecorder> recorder_;
-
-    std::thread pump_;
-    std::atomic<bool> pumping_ { false };
-
-    mutable std::mutex errorMutex_;
-    std::string lastError_;
-};
-
-// A channel that could not be opened. Kept rather than dropped, so the status
-// topic reports what is wrong with it instead of it simply being absent -- "the
-// adapter is held by the kernel driver" is a far more useful thing to publish
-// than nothing at all.
-struct FailedChannel
-{
-    can_bridge::ChannelConfig config;
-    std::string error;
-};
 
 // What a --set-bitrate argument asks for.
 struct BitrateRequest
@@ -530,26 +299,18 @@ int main(int argc, char** argv)
     auto registry = can::make_default_registry(registryOptions);
 
     // --- open what was asked for --------------------------------------------
-    std::vector<std::unique_ptr<BridgedChannel>> channels;
-    std::vector<FailedChannel> failed;
+    std::vector<std::unique_ptr<can_bridge::BridgedChannel>> channels;
+    std::vector<can_bridge::FailedChannel> failed;
 
     for (const auto& channelConfig : config.channels)
     {
-        can::OpenOptions open;
-        open.bitrate.nominalBps = channelConfig.bitrateBps;
-        open.bitrate.dataBps = channelConfig.dataBitrateBps;
-        open.bitrate.nominalSamplePointPermille = channelConfig.samplePointPermille;
-        open.bitrate.dataSamplePointPermille = channelConfig.dataSamplePointPermille;
-        open.listenOnly = channelConfig.listenOnly;
-        open.rxQueueDepth = channelConfig.rxQueueDepth;
-        open.start = true;
-
-        auto opened = registry.open(channelConfig.device, open);
+        auto opened = registry.open(channelConfig.device, can_bridge::openOptions(channelConfig));
         if (!opened.has_value())
         {
             SPDLOG_ERROR("[{}] cannot open {}: {}", channelConfig.name, channelConfig.device,
                          opened.error().message);
-            failed.push_back(FailedChannel { channelConfig, opened.error().message });
+            failed.push_back(can_bridge::FailedChannel { channelConfig, opened.error().message, {} });
+            failed.back().reopen.failed(std::chrono::steady_clock::now());
             if (!config.continueOnChannelError)
             {
                 return 1;
@@ -565,7 +326,7 @@ int main(int argc, char** argv)
         SPDLOG_INFO("[{}]   tx <- '{}'{}", channelConfig.name, channelConfig.txKey,
                     channelConfig.acceptTx ? "" : " (not accepted)");
 
-        channels.push_back(std::make_unique<BridgedChannel>(channelConfig, *opened));
+        channels.push_back(std::make_unique<can_bridge::BridgedChannel>(channelConfig, *opened));
     }
 
     if (channels.empty())
@@ -585,13 +346,13 @@ int main(int argc, char** argv)
     // Per channel, the drop counters as of the last status: see below.
     std::map<std::string, std::uint64_t> droppedSeen;
 
-    // The main loop and the bit-rate service (a zenoh thread) both publish a
-    // status, and the builder, droppedSeen and the health checks are shared.
-    std::mutex statusMutex;
+    // The main loop and the bit-rate service (a zenoh thread) share the channel
+    // lists, the status builder, droppedSeen and the health checks. Everything
+    // that touches them holds this.
+    std::mutex stateMutex;
 
-    auto publishStatus = [&]
+    auto publishStatusLocked = [&]
     {
-        const std::lock_guard<std::mutex> lock(statusMutex);
         auto& fields = statusPublisher.fields();
         auto list = fields.initChannels(
             static_cast<unsigned>(channels.size() + failed.size()));
@@ -629,14 +390,17 @@ int main(int argc, char** argv)
         statusPublisher.put();
     };
 
-    pub_sub::ZenohService<CanBridgeSetBitrateRequest, CanBridgeSetBitrateResponse> bitrateService(
+    // Held by pointer so shutdown can retire it before the channels it reaches.
+    auto bitrateService = std::make_unique<
+        pub_sub::ZenohService<CanBridgeSetBitrateRequest, CanBridgeSetBitrateResponse>>(
         config.setBitrateKey,
         [&](const CanBridgeSetBitrateRequest::Reader& request,
             CanBridgeSetBitrateResponse::Builder& response)
         {
+            const std::lock_guard<std::mutex> lock(stateMutex);
             const std::string name = request.getChannel();
 
-            BridgedChannel* target = nullptr;
+            can_bridge::BridgedChannel* target = nullptr;
             for (auto& channel : channels)
             {
                 if (channel->config().name == name)
@@ -687,13 +451,63 @@ int main(int argc, char** argv)
             SPDLOG_INFO("[{}] now at {}", name, actual.toString());
             response.setOk(true);
             response.setError("");
-            publishStatus();
+            publishStatusLocked();
         });
+
+    // An adapter unplugged at runtime, or absent at startup, is opened again
+    // when it comes back. Without this a replugged dongle stayed dark until
+    // someone restarted the node: the process was up, so systemd never did.
+    auto reopenLocked = [&](std::chrono::steady_clock::time_point now)
+    {
+        for (auto& channel : channels)
+        {
+            if (!channel->lost() || !channel->reopen().due(now))
+            {
+                continue;
+            }
+            auto opened = registry.open(channel->config().device,
+                                        can_bridge::openOptions(channel->config()));
+            if (!opened.has_value())
+            {
+                SPDLOG_DEBUG("[{}] still cannot open {}: {}", channel->config().name,
+                             channel->config().device, opened.error().message);
+                channel->reopen().failed(now);
+                continue;
+            }
+            SPDLOG_INFO("[{}] reopened {}", channel->config().name, channel->config().device);
+            channel->reattach(*opened);
+        }
+
+        for (auto it = failed.begin(); it != failed.end();)
+        {
+            if (!it->reopen.due(now))
+            {
+                ++it;
+                continue;
+            }
+            auto opened = registry.open(it->config.device, can_bridge::openOptions(it->config));
+            if (!opened.has_value())
+            {
+                it->error = opened.error().message;
+                it->reopen.failed(now);
+                ++it;
+                continue;
+            }
+            SPDLOG_INFO("[{}] {} opened at last", it->config.name, it->config.device);
+            auto bridged = std::make_unique<can_bridge::BridgedChannel>(it->config, *opened);
+            bridged->start();
+            channels.push_back(std::move(bridged));
+            it = failed.erase(it);
+        }
+    };
 
     SPDLOG_INFO("[node] bridging {} channel(s); status on '{}', bitrate service on '{}'",
                 channels.size(), config.statusKey, config.setBitrateKey);
 
-    publishStatus();
+    {
+        const std::lock_guard<std::mutex> lock(stateMutex);
+        publishStatusLocked();
+    }
 
     // --- run ----------------------------------------------------------------
     auto nextStatus = std::chrono::steady_clock::now();
@@ -702,9 +516,11 @@ int main(int argc, char** argv)
     cli::waitForInterrupt([&] {
         health.kick();
         const auto now = std::chrono::steady_clock::now();
+        const std::lock_guard<std::mutex> lock(stateMutex);
+        reopenLocked(now);
         if (now >= nextStatus)
         {
-            publishStatus();
+            publishStatusLocked();
             nextStatus = now + std::chrono::milliseconds(config.statusIntervalMs);
         }
     }, std::chrono::milliseconds(50));
@@ -714,6 +530,8 @@ int main(int argc, char** argv)
     // Stop the pumps before the channels, so nothing is mid-receive when the
     // hardware goes away.
     SPDLOG_INFO("[node] shutting down");
+    // The service first, so no call is mid-way through a channel below.
+    bitrateService.reset();
     for (auto& channel : channels)
     {
         channel->stop();
