@@ -217,10 +217,19 @@ messages now state outright:
   and `dirty`, so you can tell whether the layout still differs from the file on
   disk without saving it to find out. Widget names survive an undo — a selector
   you are holding stays valid.
-- **The editor does not prompt about unsaved work under `--mcp`.** A modal
-  dialog with nobody at the screen is a hang, not a question, so `app_launch`
-  replacing an editor discards unsaved changes with a log line and no dialog.
-  `editor.save` first if you care about them.
+- **A call that opens a modal is answered with the modal.** A dialog's or a
+  menu's `exec()` does not return until it closes, so the dispatcher watches
+  each handler and, the moment a new modal or popup appears, answers with
+  `{"modal_opened": true, "modal": {...}}` naming it. The handler stays parked
+  in the modal's event loop, which runs every later call, so the dialog is
+  found, screenshotted and clicked like any other widget; when it closes the
+  handler carries on. A right `input.click` also sends the context-menu event
+  a real one would, and the open menu is one of the snapshot roots. Close a
+  modal you do not want with `input.key` Escape.
+- **The editor does not prompt about unsaved work under `--mcp`.** A prompt
+  raised on the way out of `app.quit` would answer the quit with itself, so
+  `app_launch` replacing an editor discards unsaved changes with a log line and
+  no dialog. `editor.save` first if you care about them.
 - **Use `carplay --simulate` for anything CarPlay-shaped.** It publishes a
   synthetic session — H.264 video, PCM audio, rotating metadata — on the real
   zenoh topics, so the whole dashboard side is exercisable with no iPhone

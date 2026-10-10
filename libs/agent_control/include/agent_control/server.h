@@ -6,7 +6,11 @@
 
 #include <QObject>
 
+class QWidget;
+
+#include <atomic>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -77,6 +81,30 @@ class AgentServer : public QObject
         Method handler;
         MethodKind kind = MethodKind::kReadOnly;
     };
+
+    // One call in flight. Answered once: by the handler's result, or earlier,
+    // by the modal it opened.
+    struct PendingCall
+    {
+        std::promise<MethodResult> promise;
+        std::atomic<bool> done{false};
+
+        bool answered() const { return done.load(); }
+        void answer(MethodResult result)
+        {
+            bool expected = false;
+            if (done.compare_exchange_strong(expected, true))
+            {
+                promise.set_value(std::move(result));
+            }
+        }
+    };
+
+    // How often a running handler is checked for a modal it opened. Only ever
+    // ticks inside that modal's event loop.
+    static constexpr int kModalPollMs = 20;
+
+    json modalOpened(const std::string& method, QWidget* modal);
 
     json dispatch(const json& request);
     MethodResult invoke(const std::string& method, const json& params, int timeout_ms);

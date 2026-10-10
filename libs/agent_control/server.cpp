@@ -2,10 +2,19 @@
 
 #include "agent_control/control_socket.h"
 #include "agent_control/gui_thread.h"
+#include "agent_control/inspector.h"
+
+#include <QApplication>
+#include <QThread>
+#include <QTimer>
+#include <QWidget>
 
 #include <spdlog/spdlog.h>
 
+#include <chrono>
 #include <exception>
+#include <future>
+#include <memory>
 #include <utility>
 
 namespace agent_control
@@ -187,32 +196,96 @@ MethodResult AgentServer::invoke(const std::string& method, const json& params, 
     // Hop to the GUI thread. Everything a handler touches -- the widget tree,
     // the backing store, event delivery -- is thread-affine to it, so this is
     // the only place that hop needs to exist.
-    auto outcome = callOnGuiThread(
-        this,
-        [&entry, &params]() -> MethodResult
-        {
-            try
-            {
-                MethodResult r = entry.handler(params);
-                if (r.has_value() && entry.kind == MethodKind::kMutating)
-                {
-                    settleEventLoop();
-                }
-                return r;
-            }
-            catch (const std::exception& e)
-            {
-                return std::unexpected(
-                    internalError(std::string("Handler threw: ") + e.what()));
-            }
-            catch (...)
-            {
-                return std::unexpected(internalError("Handler threw a non-std exception."));
-            }
-        },
-        timeout_ms);
+    //
+    // Not callOnGuiThread(): a handler can open a modal -- a dialog's exec(), a
+    // menu's exec() -- and then not return until someone closes it. The call is
+    // answered as soon as one opens, describing it, and the handler stays parked
+    // in the modal's own event loop, which keeps running every later call. So
+    // the dialog is driven like any other widget, and its handler finishes when
+    // it closes.
+    //
+    // Everything the queued task uses is held by value or shared_ptr: after an
+    // early answer or a timeout this function returns while the task is still
+    // queued or still parked, and a reference into this frame would dangle.
+    auto call = std::make_shared<PendingCall>();
+    std::future<MethodResult> future = call->promise.get_future();
 
-    if (!outcome.has_value())
+    auto task = [this, call, entry, params, method]()
+        {
+            // Widgets only exist under a QApplication; the dispatcher also runs
+            // under a bare QCoreApplication, where asking would crash.
+            const bool widgets = qobject_cast<QApplication*>(QCoreApplication::instance()) != nullptr;
+            QWidget* const modal_before = widgets ? QApplication::activeModalWidget() : nullptr;
+            QWidget* const popup_before = widgets ? QApplication::activePopupWidget() : nullptr;
+
+            // Fires only inside a nested event loop, which is exactly when a
+            // handler that has not returned has opened something modal.
+            QTimer watch;
+            watch.setInterval(kModalPollMs);
+            QObject::connect(&watch, &QTimer::timeout, &watch,
+                             [this, &watch, call, modal_before, popup_before, &method]()
+                             {
+                                 QWidget* opened = QApplication::activePopupWidget();
+                                 if (opened == popup_before)
+                                 {
+                                     opened = QApplication::activeModalWidget();
+                                     if (opened == modal_before)
+                                     {
+                                         opened = nullptr;
+                                     }
+                                 }
+                                 if (opened != nullptr)
+                                 {
+                                     watch.stop();
+                                     call->answer(modalOpened(method, opened));
+                                 }
+                             });
+            if (widgets)
+            {
+                watch.start();
+            }
+
+            MethodResult result = [&]() -> MethodResult
+            {
+                try
+                {
+                    return entry.handler(params);
+                }
+                catch (const std::exception& e)
+                {
+                    return std::unexpected(internalError(std::string("Handler threw: ") + e.what()));
+                }
+                catch (...)
+                {
+                    return std::unexpected(internalError("Handler threw a non-std exception."));
+                }
+            }();
+            watch.stop();
+
+            if (call->answered())
+            {
+                SPDLOG_INFO("[agent] '{}' finished after the modal it opened closed", method);
+                return;
+            }
+            if (result.has_value() && entry.kind == MethodKind::kMutating)
+            {
+                settleEventLoop();
+            }
+            call->answer(std::move(result));
+        };
+
+    // Already on the GUI thread (tests, in-process callers): posting to our own
+    // queue and blocking on it would deadlock.
+    if (QThread::currentThread() == thread())
+    {
+        task();
+    }
+    else
+    {
+        QMetaObject::invokeMethod(this, std::move(task), Qt::QueuedConnection);
+    }
+
+    if (future.wait_for(std::chrono::milliseconds(timeout_ms)) != std::future_status::ready)
     {
         SPDLOG_WARN("[agent] '{}' timed out after {} ms waiting for the GUI thread",
                     method, timeout_ms);
@@ -222,11 +295,24 @@ MethodResult AgentServer::invoke(const std::string& method, const json& params, 
         return std::unexpected(AgentError{
             ErrorCode::kGuiThreadBusy,
             "The GUI thread did not run '" + method + "' within " + std::to_string(timeout_ms) +
-                " ms. It is blocked, in a modal loop, or saturated with repaints.",
+                " ms. It is blocked or saturated with repaints.",
             std::move(data)});
     }
 
-    return std::move(outcome.value());
+    return future.get();
+}
+
+json AgentServer::modalOpened(const std::string& method, QWidget* modal)
+{
+    json out = json::object();
+    out["modal_opened"] = true;
+    out["modal"] = describeWidget(locator(), modal);
+    out["note"] = "'" + method +
+                  "' opened this and is waiting for it to close; its own result is not "
+                  "reported. Drive it with ui.* and input.* like any other widget -- a "
+                  "button click, input.key Escape, or a menu item -- and the app carries on "
+                  "from there.";
+    return out;
 }
 
 }  // namespace agent_control

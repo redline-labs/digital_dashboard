@@ -152,7 +152,9 @@ json buildSnapshot(WidgetLocator& locator, const SnapshotOptions& options)
         {
             for (QObject* child : widget->children())
             {
-                if (auto* as_widget = qobject_cast<QWidget*>(child))
+                // A child that is a window -- a dialog parented to this one --
+                // is listed under its own root, where its path starts.
+                if (auto* as_widget = qobject_cast<QWidget*>(child); as_widget != nullptr && !as_widget->isWindow())
                 {
                     descend(as_widget, depth + 1);
                 }

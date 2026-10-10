@@ -112,4 +112,5 @@ two cannot disagree about what is on the bus.
 | `agent_control_test_framing` | `agent_control unit` | The JSON-RPC envelope through the real `handleLine`, weighted towards truncated lines, wrong-typed fields, unknown parameters and throwing handlers. |
 | `agent_control_test_params` | `agent_control unit` | A wrong type is an error naming the parameter, never an absent one; null is absent; integers are range-checked for their target type. |
 | `agent_control_test_log_ring` | `agent_control unit` | `seq` is monotonic and never reused, `since_seq` returns only what is new, eviction is reported, and Qt messages arrive. |
+| `agent_control_test_modal` | `agent_control gui` | From a second thread, as the socket calls: a call that opens a dialog is answered with it, later calls run while it is open, a click closes it and its handler carries on; a right click opens a context menu and an item can be picked. |
 | `agent_control_test_selector` | `agent_control gui` | Selector resolution against a real widget tree fails loudly on ambiguity, staleness and out-of-range indices. |

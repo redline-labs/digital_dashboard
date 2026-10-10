@@ -578,9 +578,11 @@ app_call("scope.stats", {"panel": "map1"})
 is `BAD_PARAMS`, because the result could not be read back from the request.
 Every `scope.*` method sees settled buffers, so "set the view, then read
 `sample_stats`" observes exactly the buffers it asked for. Writing
-`scope.settings` replaces the whole tileset list rather than merging, and the
-Settings dialog refuses to open under `--mcp`, where a modal has nobody to
-dismiss it. The recipes that prove a seek, a pan, a zoom anchor, the density
+`scope.settings` replaces the whole tileset list rather than merging. The
+dialogs open under `--mcp` too: right-click a panel with `input_click` and the
+call comes back with the open context menu, a click on `Configure…` opens the
+dialog, and `ui_screenshot(target="#panel_config_dialog")` shows it. Its
+editors are named `field:<name>`. The recipes that prove a seek, a pan, a zoom anchor, the density
 histogram and a video seek without a screenshot are under
 [verifying it headlessly](../design/scope-internals.html#verifying-it-headlessly).
 
@@ -621,10 +623,12 @@ window a seek to `20` shows `[0, 30]`. Narrow the window first.
 **`--mcp /tmp/a.sock` exits with "Unrecognised argument".** The socket path
 goes after `=`.
 
-**A headless run hangs with no log line.** A modal dialog was raised with
-nobody to dismiss it. Under `--mcp`, call the dialog-free methods
-(`scope.load`, `scope.save`, `scope.open_recording`, `scope.save_recording`,
-`scope.settings`); the unsaved-changes prompt returns true with a warning.
+**A call came back with `modal_opened` instead of its result.** It opened a
+dialog or a menu, which is now waiting for you; drive it, or press Escape on it.
+The file pickers and the unsaved-changes prompts are not raised under `--mcp`:
+use `scope.load`, `scope.save`, `scope.open_recording` and
+`scope.save_recording` with a path, and the prompts answer for themselves with
+a warning.
 
 **A workspace loaded with a panel missing, or the layout defaulted.** The log
 names the panel: an unknown `type:` is skipped with a warning, and a panel

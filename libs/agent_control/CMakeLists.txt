@@ -70,6 +70,12 @@ add_executable(agent_control_test_params test_params.cpp)
 target_link_libraries(agent_control_test_params PRIVATE agent_control)
 add_project_test(TARGET agent_control_test_params LABELS agent_control unit)
 
+# A modal opened by a call: answered as soon as it opens, driven through its own
+# event loop, closed by a click. From a second thread, as the socket calls.
+add_executable(agent_control_test_modal test_modal.cpp)
+target_link_libraries(agent_control_test_modal PRIVATE agent_control spdlog::spdlog)
+add_project_test(TARGET agent_control_test_modal LABELS agent_control gui)
+
 add_executable(agent_control_test_selector test_selector.cpp)
 target_link_libraries(agent_control_test_selector PRIVATE agent_control spdlog::spdlog)
 add_project_test(TARGET agent_control_test_selector LABELS agent_control gui)

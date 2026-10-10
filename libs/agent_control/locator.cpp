@@ -117,6 +117,13 @@ std::vector<QWidget*> WidgetLocator::roots() const
 
         out.push_back(w);
     }
+
+    // The menu that is open, though: a context menu raised by a click is a
+    // modal the caller has to be able to see and pick from.
+    if (QWidget* popup = QApplication::activePopupWidget())
+    {
+        out.push_back(popup);
+    }
     return out;
 }
 
@@ -129,7 +136,7 @@ std::vector<QWidget*> WidgetLocator::allWidgets() const
         out.push_back(widget);
         for (QObject* child : widget->children())
         {
-            if (auto* as_widget = qobject_cast<QWidget*>(child))
+            if (auto* as_widget = qobject_cast<QWidget*>(child); as_widget != nullptr && !as_widget->isWindow())
             {
                 descend(as_widget);
             }
@@ -296,7 +303,9 @@ Result<QWidget*> WidgetLocator::resolvePath(const std::string& selector)
                 for (QObject* child : parent->children())
                 {
                     auto* as_widget = qobject_cast<QWidget*>(child);
-                    if (as_widget == nullptr)
+                    // A window is the first segment of its own path, never a
+                    // later one, and it is walked from the roots.
+                    if (as_widget == nullptr || as_widget->isWindow())
                     {
                         continue;
                     }

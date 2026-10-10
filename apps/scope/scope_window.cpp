@@ -422,17 +422,8 @@ ScopeWindow::PanelEntry* ScopeWindow::findPanel(const QString& id)
 
 void ScopeWindow::showPanelMenu(const QString& panel_id, const QPoint& at)
 {
-    // Same rule as every other modal path: a menu.exec() or dialog raised
-    // headlessly has nobody to dismiss it and hangs the process with no log
-    // line. Not currently reachable from the agent interface, but this was the
-    // one hole in an otherwise complete policy.
-    if (headless_)
-    {
-        SPDLOG_WARN("Refusing to raise a panel context menu headlessly. Use scope.add_signal / "
-                    "scope.remove_signal / scope.remove_panel.");
-        return;
-    }
-
+    // Raised headlessly too: the agent interface answers the right click with
+    // the open menu and drives it, and the dialogs behind it, like any widget.
     PanelEntry* entry = findPanel(panel_id);
     if (entry == nullptr)
     {
@@ -836,8 +827,8 @@ void ScopeWindow::reportProblems(const QString& summary, const std::vector<std::
 
     if (headless_ || notes.empty())
     {
-        // Everything is already in the log; a modal raised headlessly has
-        // nobody to dismiss it.
+        // Already in the log. Headless, this runs inside scope.open_recording,
+        // and a box would answer that call with itself instead of its result.
         return;
     }
 
@@ -1829,14 +1820,6 @@ bool ScopeWindow::setSettings(const scope_settings_t& settings)
 
 bool ScopeWindow::settingsDialog()
 {
-    if (headless_)
-    {
-        // Nobody to dismiss it. `scope.settings` is the headless path and does
-        // the same work.
-        SPDLOG_WARN("Refusing to open the settings dialog while headless; use scope.settings.");
-        return false;
-    }
-
     SettingsDialog dialog(settings_, this);
     if (dialog.exec() != QDialog::Accepted)
     {

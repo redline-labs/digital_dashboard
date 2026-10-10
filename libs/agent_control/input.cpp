@@ -3,6 +3,7 @@
 #include "agent_control/locator.h"
 
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -183,6 +184,16 @@ Result<json> sendClick(QWidget* widget, const ClickOptions& options)
     QMouseEvent release = makeMouseEvent(QEvent::MouseButtonRelease, widget, pos, options.button,
                                          Qt::NoButton, options.modifiers);
     QApplication::sendEvent(widget, &release);
+
+    // A real right click also asks for a context menu: the window system
+    // delivers it, and a synthesised press does not. Without this a widget
+    // with a context menu could never be made to show it.
+    if (options.button == Qt::RightButton)
+    {
+        QContextMenuEvent menu_event(QContextMenuEvent::Mouse, pos.toPoint(),
+                                     widget->mapToGlobal(pos.toPoint()), options.modifiers);
+        QApplication::sendEvent(widget, &menu_event);
+    }
 
     json out = actionReport(widget, pos);
     out["accepted"] = press.isAccepted();

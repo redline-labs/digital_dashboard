@@ -1016,8 +1016,7 @@ Writing through `scope.settings` replaces the whole list rather than merging.
 A caller that wanted to remove a tileset has no way to say so through a merge,
 and a partial write that silently kept an old entry shows up later as a map
 drawn from the wrong archive. The dialog is a second front end onto the same
-`ScopeWindow::setSettings()`; it refuses to open under `--mcp`, where a modal
-has nobody to dismiss it.
+`ScopeWindow::setSettings()`.
 
 ## Workspaces
 
@@ -1046,9 +1045,13 @@ through the YAML perfectly for a year while both ends ignored it, until
 ## Headless
 
 `--mcp` sets `setHeadless(true)`, and that is not only about the Qt platform.
-There is nobody to dismiss a modal dialog in a headless run, so one raised
-there does not fail; it hangs the process, with no log line and no error,
-which is the hardest kind of bug to find from the other side of a socket.
+The agent interface can drive a modal -- a call that opens one is answered
+with it, and later calls run inside its event loop -- so the panel menu, the
+Configure dialog and Settings open headless as they do on screen. Two kinds of
+modal still do not. A prompt raised in the middle of another call answers
+that call with itself: the unsaved-changes prompts sit on the way out of
+`app.quit`, and the problems box on the way out of `scope.open_recording`.
+And the file pickers are a guess at a path when the caller already has one.
 
 So the File menu's work is split three ways, copied from the editor:
 dialog-free `loadWorkspace()` / `saveWorkspace()` / `openRecording()` /

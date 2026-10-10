@@ -42,8 +42,8 @@ namespace scope
 // the machine's configured tileset names instead of a free-text field nobody
 // could guess a valid value for.
 //
-// Modal, so it must not be raised headlessly -- the callers guard, the same
-// rule every dialog in this window follows.
+// Modal. Headless it is reached through the panel's context menu, and the agent
+// interface drives it like any other widget while it is open.
 class PanelConfigDialog : public QDialog
 {
     Q_OBJECT
