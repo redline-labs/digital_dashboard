@@ -326,9 +326,9 @@ void testTheConfigDialogEditsARealPanel()
 
     scope::PanelConfigDialog dialog(*panel, settings);
 
-    auto* autoscale = dialog.findChild<QCheckBox*>("config_field_autoscale_y");
+    auto* autoscale = dialog.findChild<QCheckBox*>("field:autoscale_y");
     expect(autoscale != nullptr, "dialog: the autoscale editor exists, named by its field");
-    auto* window = dialog.findChild<QDoubleSpinBox*>("config_field_window_seconds");
+    auto* window = dialog.findChild<QDoubleSpinBox*>("field:window_seconds");
     expect(window != nullptr, "dialog: the window editor exists");
     if (autoscale == nullptr || window == nullptr)
     {
@@ -360,7 +360,7 @@ void testTheConfigDialogEditsARealPanel()
     if (map != nullptr)
     {
         scope::PanelConfigDialog map_dialog(*map, settings);
-        auto* combo = map_dialog.findChild<QComboBox*>("config_field_tileset");
+        auto* combo = map_dialog.findChild<QComboBox*>("field:tileset");
         expect(combo != nullptr, "dialog: the tileset editor is a combo");
         if (combo != nullptr)
         {
@@ -378,6 +378,47 @@ void testTheConfigDialogEditsARealPanel()
                    "dialog: the tileset choice reached the map panel");
         }
     }
+}
+
+void testABadTopicKeyBlocksTheDialogsApply()
+{
+    // A key the workspace loader refuses would drop the binding the next time
+    // the file opens; the dialog keeps it out rather than saving it.
+    StubSource source;
+    TimeSeriesPanelConfig_t config;
+    config.traces.push_back(signal_binding_t{});
+    config.traces.front().source.zenoh_key = pub_sub::topic_key_t{"vehicle/engine/rpm"};
+    std::unique_ptr<scope::Panel> panel = scope::createPanel(config, source);
+    expect(panel != nullptr, "bad key: the panel constructed");
+    if (panel == nullptr)
+    {
+        return;
+    }
+
+    scope::scope_settings_t settings;
+    scope::PanelConfigDialog dialog(*panel, settings);
+    auto* key = dialog.findChild<QLineEdit*>("field:traces[0].source.zenoh_key");
+    auto* buttons = dialog.findChild<QDialogButtonBox*>("config_dialog_buttons");
+    expect(key != nullptr, "bad key: the selected trace's key editor exists, named by its path");
+    expect(buttons != nullptr, "bad key: the button box exists");
+    if (key == nullptr || buttons == nullptr)
+    {
+        return;
+    }
+    QPushButton* apply = buttons->button(QDialogButtonBox::Apply);
+    expect(apply->isEnabled(), "bad key: Apply starts enabled for a good key");
+
+    key->setText("vehicle/@engine");
+    expect(!apply->isEnabled(), "bad key: an '@' in the key disables Apply");
+    expect(!buttons->button(QDialogButtonBox::Ok)->isEnabled(), "bad key: and OK");
+
+    key->setText("vehicle/engine/speed");
+    expect(apply->isEnabled(), "bad key: fixing the key enables Apply again");
+    apply->click();
+    auto* plot = qobject_cast<scope::TimeSeriesPanel*>(panel.get());
+    expect(plot != nullptr && plot->getConfig().traces.size() == 1 &&
+               plot->getConfig().traces.front().source.zenoh_key.str() == "vehicle/engine/speed",
+           "bad key: the fixed key reached the panel");
 }
 
 void testOfflineOpensNoZenohSession()
@@ -466,6 +507,7 @@ void runWindowTests()
     testRetentionIsClampedNotRefused();
     testDirtyTracking();
     testTheConfigDialogEditsARealPanel();
+    testABadTopicKeyBlocksTheDialogsApply();
     testOfflineOpensNoZenohSession();
     testHeadlessNeverBlocksOnADialog();
     testCandidateEncodingRoundTrips();

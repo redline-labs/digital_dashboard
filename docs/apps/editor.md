@@ -72,7 +72,9 @@ changes, and it is what the agent interface addresses when it names a widget.
 name underneath, and one editor per configuration field. Strings get a line
 edit, colours a line edit with a swatch that opens a colour picker, enums a
 combo box, booleans a check box, integers and floats spin boxes, and lists a
-column of rows with Add and per-row remove buttons. A nested configuration
+column of rows with Add and per-row remove buttons. An integer's spin box spans
+exactly the field's own type, so a `uint16_t` stops at 65535 rather than
+accepting a number it would wrap. A nested configuration
 struct, such as the four sub-gauges of the cluster gauge or the map's style, is
 drawn as an inset group with its own rows. Each row's label carries the field's
 description as a tooltip. Nothing changes on the canvas until you press

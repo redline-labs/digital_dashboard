@@ -160,6 +160,8 @@ panel gives `Configure…`, `Add signal…`, `Remove signal` and `Close panel`;
 the dock's X does the same as Close panel. `Configure…` is one
 reflection-driven dialog for every panel kind, so every field below is
 editable there, and an out-of-range value shows its clamped self after Apply.
+It is the same form as the editor's properties panel, so a malformed topic key
+turns red and disables OK and Apply in the same way.
 Editing a colour, a label or an axis never discards a trace's history; only a
 change to a binding's key, schema or expression rebinds that one signal.
 

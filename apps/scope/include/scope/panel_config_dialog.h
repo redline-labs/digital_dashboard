@@ -6,6 +6,15 @@
 
 #include <QDialog>
 
+class QDialogButtonBox;
+class QLabel;
+class QScrollArea;
+
+namespace qt_helpers
+{
+class ReflectedForm;
+}
+
 namespace scope
 {
 
@@ -19,7 +28,9 @@ namespace scope
 // agent socket; a map panel added from the GUI was a permanent dead end,
 // captioned "not configured" by a Settings dialog that could not configure it.
 // One form built from the same reflection covers every panel type, including
-// the next one, with no per-panel UI code.
+// the next one, with no per-panel UI code -- qt_helpers::ReflectedForm, the
+// one the editor's properties panel uses too. A topic key that breaks the
+// rules disables OK and Apply.
 //
 // The form edits a COPY, applied through applyPanelConfig() -- the same
 // clamped path scope.panel_set_config takes, so the rebind-only-what-changed
@@ -43,7 +54,8 @@ class PanelConfigDialog : public QDialog
 
   private:
     void rebuildForm();
-    void applyToPanel();
+    void showProblems();
+    bool applyToPanel();
 
     Panel* panel_;
     const scope_settings_t* settings_;
@@ -53,7 +65,10 @@ class PanelConfigDialog : public QDialog
     // dialog: the variant never changes alternative after construction.
     panel_config_variant_t config_;
 
-    QWidget* form_host_ = nullptr;
+    QScrollArea* scroll_ = nullptr;
+    qt_helpers::ReflectedForm* form_ = nullptr;
+    QLabel* problems_ = nullptr;
+    QDialogButtonBox* buttons_ = nullptr;
 };
 
 }  // namespace scope

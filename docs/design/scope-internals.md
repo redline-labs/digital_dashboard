@@ -955,8 +955,8 @@ fails quietly:
 | `* $ ? #` | zenoh rejects the key, so the publisher never declares and silently sends nothing |
 
 The rule is checked at all three points a key enters the system. The editor's
-properties panel refuses it as you type: the field turns red, the reason
-appears under the form, Apply is disabled. Config load (dashboard and scope)
+properties panel and scope's `Configure…` dialog refuse it as you type: the
+field turns red, the reason appears under the form, Apply is disabled. Config load (dashboard and scope)
 reports it as an error with the field path, e.g.
 `widgets[0].config.zenoh_key`, and refuses to load. `BytePublisher` refuses to
 come up at all. Subscribers get a weaker rule, since they may wildcard and

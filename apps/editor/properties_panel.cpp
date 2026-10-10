@@ -3,30 +3,27 @@
 #include "editor/canvas.h"
 #include "editor/selection_frame.h"
 #include "editor/editor_constants.h"
+#include "qt_helpers/reflected_form.h"
 
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QStackedWidget>
 #include <QLineEdit>
 #include <QSpinBox>
-#include <QDoubleSpinBox>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QLabel>
-#include <QTimer>
 #include <QCheckBox>
 #include <QFrame>
 #include <QScrollArea>
 #include <QSignalBlocker>
-#include <QColorDialog>
 #include <QGroupBox>
 #include <QListWidget>
 #include <QMetaObject>
 #include <QPointer>
 
 #include <functional>
-#include <limits>
 
 #include "reflection/reflection.h"
 #include "helpers/color.h"
@@ -291,666 +288,37 @@ void PropertiesPanel::setCanvas(Canvas* canvas)
 
 namespace
 {
-    // Set on the QLineEdit of every string-leaf field that has rules of its own
-    // (a zenoh key, today): empty when the text is acceptable, otherwise the
-    // reason it is not. The editor keeps it current as the text changes, so
-    // the page can collect problems without knowing what any field is.
-    constexpr const char* kFieldProblemProperty = "redlineFieldProblem";
-
-    // Reports every rule-checked field on a page that currently has a problem.
-    //
-    // Live-and-blocking rather than refusing keystrokes: a QValidator that
-    // rejected '@' outright would silently swallow the key and leave someone
-    // wondering why their keyboard was broken. Here the character goes in, the
-    // field turns red, the reason is visible while they are still looking at
-    // it, and Apply is unavailable until it is fixed -- so nothing invalid can
-    // reach a config, but nothing is mysterious either.
-    QStringList fieldProblems(QWidget* page)
-    {
-        QStringList problems;
-        for (QLineEdit* line : page->findChildren<QLineEdit*>())
-        {
-            const QString problem = line->property(kFieldProblemProperty).toString();
-            if (problem.isEmpty())
-            {
-                continue;
-            }
-            QString name = line->objectName();
-            name.remove(0, QString("field:").size());
-            problems << QString("%1: %2").arg(name, problem);
-        }
-        return problems;
-    }
-
-    // Stops one editor from setting the width of the whole panel.
-    //
-    // Qt sizes a spin box's minimum to fit its widest possible value, and the
-    // integer editors are ranged to INT_MAX -- so every one of them demanded
-    // room for "2147483647". A combo box does the same for its longest item.
-    // Between them the form's minimum came out wider than the panel, which is
-    // what put a horizontal scrollbar under a form whose rows all fit. These are
-    // free to grow into whatever width is available; they just may not insist
-    // on it.
-    constexpr int kMinEditorWidth = 60;
-
-    void constrainEditorWidth(QWidget* editor)
-    {
-        editor->setMinimumWidth(kMinEditorWidth);
-        if (auto* combo = qobject_cast<QComboBox*>(editor))
-        {
-            combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-            combo->setMinimumContentsLength(6);
-        }
-    }
-
-    template <typename T>
-    // No fieldName/typeName parameters: they existed only to name the field in
-    // the "unsupported type" warning, and that case is a static_assert now.
-    QWidget* createLeafEditor(QWidget* parent, const T& value, const QString& path)
-    {
-        using FieldType = std::decay_t<T>;
-
-        if constexpr (std::is_same_v<FieldType, std::string>)
-        {
-            auto* line = new QLineEdit(parent);
-            line->setMinimumHeight(24);
-            line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            line->setText(QString::fromUtf8(value.data(), static_cast<int>(value.size())));
-            line->setObjectName(QString("field:%1").arg(path));
-            constrainEditorWidth(line);
-
-            return line;
-        }
-        else if constexpr (helpers::StringLeaf<FieldType> && !std::is_same_v<FieldType, helpers::Color>)
-        {
-            // A string with rules of its own -- a topic or service key. Chosen
-            // by the field's TYPE: matching on names like `*zenoh_key` missed
-            // every key named otherwise, carplay's six among them.
-            auto* line = new QLineEdit(parent);
-            line->setMinimumHeight(24);
-            line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            line->setText(QString::fromStdString(value.str()));
-            line->setPlaceholderText(QString::fromUtf8(FieldType::kFormatHint.data(),
-                                                       static_cast<qsizetype>(FieldType::kFormatHint.size())));
-            line->setObjectName(QString("field:%1").arg(path));
-            constrainEditorWidth(line);
-
-            // Tagged rather than wrapped: readLeafInto() finds the field by
-            // qobject_cast<QLineEdit*> on the editor itself, so a container
-            // with a message label would stop it being read back. The page
-            // reads the tag to block Apply.
-            const auto recheck = [line](const QString& text)
-            {
-                const std::string problem = FieldType::problem(text.toStdString());
-                line->setProperty(kFieldProblemProperty, QString::fromStdString(problem));
-                line->setStyleSheet(problem.empty() ? QString()
-                                                    : QString("border: 1px solid #C0392B; background: #2B1A18;"));
-                line->setToolTip(QString::fromStdString(problem));
-            };
-            recheck(line->text());
-            QObject::connect(line, &QLineEdit::textChanged, line, recheck);
-            return line;
-        }
-        else if constexpr (std::is_same_v<FieldType, helpers::Color>)
-        {
-            // Create a widget with text field and color picker button
-            auto* container = new QWidget(parent);
-            auto* layout = new QHBoxLayout(container);
-            layout->setContentsMargins(0, 0, 0, 0);
-            layout->setSpacing(4);
-            
-            auto* line = new QLineEdit(container);
-            line->setMinimumHeight(24);
-            line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            line->setText(QString::fromStdString(value.value()));
-            line->setObjectName(QString("field:%1").arg(path));
-            layout->addWidget(line);
-            
-            // Color preview/picker button
-            auto* colorBtn = new QPushButton(container);
-            colorBtn->setMinimumHeight(24);
-            colorBtn->setMaximumWidth(48);
-            colorBtn->setText("🎨");
-            colorBtn->setToolTip("Choose color");
-            
-            // Set button background to current color
-            QColor currentColor(QString::fromStdString(value.value()));
-            if (currentColor.isValid())
-            {
-                colorBtn->setStyleSheet(QString("QPushButton { background-color: %1; }").arg(currentColor.name()));
-            }
-            
-            // Connect color picker
-            QObject::connect(colorBtn, &QPushButton::clicked, container, [line, colorBtn]()
-            {
-                QColor current(line->text());
-                QColor picked = QColorDialog::getColor(current, colorBtn->parentWidget(), "Choose Color");
-                if (picked.isValid())
-                {
-                    line->setText(picked.name());
-                    colorBtn->setStyleSheet(QString("QPushButton { background-color: %1; }").arg(picked.name()));
-                }
-            });
-            
-            // Update button color when text changes
-            QObject::connect(line, &QLineEdit::textChanged, colorBtn, [colorBtn](const QString& text)
-            {
-                QColor color(text);
-                if (color.isValid())
-                {
-                    colorBtn->setStyleSheet(QString("QPushButton { background-color: %1; }").arg(color.name()));
-                }
-            });
-            
-            layout->addWidget(colorBtn);
-            container->setLayout(layout);
-            container->setObjectName(QString("field:%1").arg(path));
-            constrainEditorWidth(container);
-            return container;
-        }
-        else if constexpr (std::is_enum_v<FieldType>)
-        {
-            auto* combo = new QComboBox(parent);
-            for (const auto& enumVal : reflection::enum_traits<FieldType>::values())
-            {
-                const std::string_view value_str = reflection::enum_traits<FieldType>::to_string(enumVal);
-                combo->addItem(QString::fromUtf8(value_str.data(), static_cast<int>(value_str.size())));
-            }
-            combo->setMinimumHeight(24);
-            combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            // set current
-            const std::string_view cur = reflection::enum_traits<FieldType>::to_string(value);
-            const int idx = combo->findText(QString::fromUtf8(cur.data(), static_cast<int>(cur.size())));
-            if (idx >= 0) combo->setCurrentIndex(idx);
-            combo->setObjectName(QString("field:%1").arg(path));
-            constrainEditorWidth(combo);
-            return combo;
-        }
-        else if constexpr (std::is_same_v<FieldType, bool>)
-        {
-            auto* check = new QCheckBox(parent);
-            check->setMinimumHeight(22);
-            check->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-            check->setChecked(value);
-            check->setObjectName(QString("field:%1").arg(path));
-            return check;
-        }
-        else if constexpr (std::is_integral_v<FieldType>)
-        {
-            auto* spin = new QSpinBox(parent);
-            spin->setMinimumHeight(24);
-            spin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-
-            // QSpinBox supports int only; clamp ranges to int domain to avoid overflow on unsigned configs
-            const int minVal = std::is_signed_v<FieldType> ? std::numeric_limits<int>::min() : 0;
-            const int maxVal = std::numeric_limits<int>::max();
-            spin->setRange(minVal, maxVal);
-            spin->setValue(static_cast<int>(value));
-            spin->setObjectName(QString("field:%1").arg(path));
-            constrainEditorWidth(spin);
-            return spin;
-        }
-        else if constexpr (std::is_floating_point_v<FieldType>)
-        {
-            auto* dspin = new QDoubleSpinBox(parent);
-            dspin->setDecimals(3);
-            dspin->setMinimumHeight(24);
-            dspin->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-            // Remove implicit 0..99.99 default range; use a very permissive range
-            dspin->setRange(std::numeric_limits<double>::lowest(), std::numeric_limits<double>::max());
-            dspin->setValue(static_cast<double>(value));
-            dspin->setObjectName(QString("field:%1").arg(path));
-            constrainEditorWidth(dspin);
-            return dspin;
-        }
-        else
-        {
-            // A compile error, not a runtime warning. This used to build a
-            // read-only "(unsupported type)" box, which readIntoConfig then had
-            // no branch to read back -- so the field was reset to its default on
-            // every Apply. A config field the panel cannot render is a silent
-            // data-loss bug for whoever adds it, and they will not see the log
-            // line. config_json.h has taken this position all along; the editor
-            // is the half that was lenient.
-            //
-            // If you land here: add a branch above for the type, and a matching
-            // one in readLeafFromWidget.
-            static_assert(sizeof(T) == 0,
-                          "properties_panel cannot build an editor for this config field type. "
-                          "Add a branch to createLeafEditor and readLeafFromWidget.");
-        }
-    }
-
-    // The label for one field of `Struct`: its friendly name, plus an info icon
-    // carrying the description when the config supplies one.
-    //
-    // Shared by the top-level form and by nested structs. The nested case used
-    // to print the raw field name -- `red_start_fraction` rather than "Red
-    // Start" -- and had no way to show a description at all, because the label
-    // was built inline from the string reflection handed it. Everything a field
-    // is called now comes from one place.
-    template <typename Struct>
-    QWidget* createFieldLabel(QWidget* parent, std::string_view fieldName)
-    {
-        // Every struct this panel renders needs friendly names -- and this is the
-        // one place they are read, for the top-level config and for nested
-        // structs alike, so it is where the requirement belongs.
-        //
-        // Asserting here rather than at the declaration is deliberate. A struct
-        // is reflected for many reasons; app_config_t and the codec tests'
-        // throwaway structs will never appear in a UI and must not be made to
-        // carry labels. A config needs metadata because it is *rendered*, not
-        // because it is reflected.
-        //
-        // Seven of the fifteen widget configs had no metadata at all, and nothing
-        // said so: get_friendly_name falls back to the field name, so the panel
-        // showed `odometer_zenoh_key` and looked like it was working.
-        static_assert(reflection::metadata_covers_all_fields<Struct>(),
-                      "A config rendered in the properties panel has a field with no "
-                      "friendly name. Every field needs one, or the panel falls back "
-                      "to the raw field name and silently looks fine.");
-        static_assert(reflection::metadata_has_no_orphan_entries<Struct>(),
-                      "A metadata entry names a field this struct does not have -- "
-                      "usually a typo or a renamed field. The lookup is by name, so "
-                      "the entry is silently ignored and the field it was meant for "
-                      "falls back to its raw name.");
-
-        const std::string_view friendly = reflection::get_friendly_name<Struct>(fieldName);
-        const QString text = QString::fromUtf8(friendly.data(), static_cast<int>(friendly.size()));
-
-        const std::string_view description = reflection::get_description<Struct>(fieldName);
-        if (description.empty())
-        {
-            auto* label = new QLabel(text, parent);
-            label->setStyleSheet("QLabel { font-weight: 600; }");
-            return label;
-        }
-
-        auto* container = new QWidget(parent);
-        auto* layout = new QHBoxLayout(container);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(4);
-
-        auto* textLabel = new QLabel(text, container);
-        textLabel->setStyleSheet("QLabel { font-weight: 600; }");
-        layout->addWidget(textLabel);
-
-        auto* infoIcon = new QLabel("ⓘ", container);
-        infoIcon->setStyleSheet("QLabel { color: #0066cc; font-size: 12px; }");
-        infoIcon->setToolTip(
-            QString::fromUtf8(description.data(), static_cast<int>(description.size())));
-        layout->addWidget(infoIcon);
-
-        layout->addStretch();
-        container->setLayout(layout);
-        return container;
-    }
-
-    // Label above the editor rather than beside it.
-    //
-    // Beside it, the label column took whatever width the longest name wanted
-    // and the editors got the remainder -- which in a 259px panel was about
-    // 90px, so "vehicle/speed_mps" displayed as "vehicle/sp" and the form grew a
-    // horizontal scrollbar. Wrapping gives every editor the full width of the
-    // panel, at the cost of a taller form. The values are the part you need to
-    // be able to read.
-    void applyFormStyle(QFormLayout* form)
-    {
-        form->setRowWrapPolicy(QFormLayout::WrapAllRows);
-        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-        form->setFormAlignment(Qt::AlignTop);
-        form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        form->setHorizontalSpacing(8);
-        form->setVerticalSpacing(4);
-    }
-
-    template <typename T>
-    QWidget* createEditorFor(QWidget* parent, std::string_view fieldName, T& ref, std::string_view typeName, const QString& path)
-    {
-        using FieldType = std::decay_t<T>;
-        if constexpr (reflection::is_std_vector<FieldType>::value)
-        {
-            using Elem = typename reflection::is_std_vector<FieldType>::value_type;
-            // Container for vector elements with add/remove controls
-            auto* container = new QWidget(parent);
-            auto* outer = new QVBoxLayout(container);
-            outer->setContentsMargins(0,0,0,0);
-            outer->setSpacing(6);
-
-            // Header with (+) and (-)
-            auto* header = new QWidget(container);
-            auto* headerLayout = new QHBoxLayout(header);
-            headerLayout->setContentsMargins(0,0,0,0);
-            headerLayout->setSpacing(6);
-            auto* addBtn = new QPushButton("Add", header);
-            addBtn->setToolTip("Add an entry to the end of the list");
-            headerLayout->addStretch();
-            headerLayout->addWidget(addBtn);
-            header->setLayout(headerLayout);
-            outer->addWidget(header);
-
-            // Items area
-            auto* items = new QWidget(container);
-            auto* itemsLayout = new QVBoxLayout(items);
-            itemsLayout->setContentsMargins(4,4,4,4);
-            itemsLayout->setSpacing(8);
-
-            auto addRow = [items, itemsLayout, fieldName, typeName, path](const Elem* initValue)
-            {
-                const int idx = itemsLayout->count();
-                auto* row = new QWidget(items);
-                auto* h = new QHBoxLayout(row);
-                h->setContentsMargins(0,2,0,2);
-                h->setSpacing(6);
-                Elem valueToUse = initValue ? *initValue : Elem{};
-                const QString childPath = QString("%1[%2]").arg(path).arg(idx);
-
-                // createEditorFor, not createLeafEditor: an element that is
-                // itself a reflected struct needs the nested-struct branch. No
-                // config has a vector of structs today, which is exactly why the
-                // next one would have hit the leaf path and been silently reset
-                // to defaults on Apply.
-                //
-                // The editor is item 0 of the row and the remove button item 1;
-                // readEditorInto() reads the row positionally, so anything added
-                // here has to keep the editor first.
-                auto* childEditor = createEditorFor<Elem>(row, fieldName, valueToUse, typeName, childPath);
-                h->addWidget(childEditor, 1);
-
-                // Remove this row, rather than "remove the last one". The single
-                // global button could only drop entries off the end, so taking
-                // an entry out of the middle of a list meant retyping every
-                // value after it.
-                auto* rowRemove = new QPushButton("✕", row);
-                rowRemove->setToolTip("Remove this entry");
-                rowRemove->setFixedWidth(24);
-                rowRemove->setFlat(true);
-                QObject::connect(rowRemove, &QPushButton::clicked, row, [row]
-                {
-                    // Detached from the layout AND hidden, because the read walks
-                    // the layout and deleteLater does not take it out until the
-                    // event loop next runs -- so an Apply in between would see a
-                    // row the user had already removed.
-                    row->hide();
-                    row->setParent(nullptr);
-                    row->deleteLater();
-                });
-                h->addWidget(rowRemove, 0);
-
-                row->setLayout(h);
-                itemsLayout->addWidget(row);
-            };
-
-            // Populate existing elements
-            for (auto& elem : ref)
-            {
-                addRow(&elem);
-            }
-
-            QObject::connect(addBtn, &QPushButton::clicked, container, [addRow]{ addRow(nullptr); });
-
-            items->setLayout(itemsLayout);
-            outer->addWidget(items);
-            container->setLayout(outer);
-            return container;
-        }
-        else if constexpr (reflection::is_reflected_struct<FieldType>::value)
-        {
-            // Build an inset group with the nested struct's fields
-            auto* frame = new QFrame(parent);
-            frame->setObjectName("insetStructFrame");
-            frame->setFrameShape(QFrame::StyledPanel);
-            frame->setFrameShadow(QFrame::Raised);
-            frame->setStyleSheet("#insetStructFrame{ border:1px solid palette(mid); border-radius:4px; }");
-
-            auto* form = new QFormLayout(frame);
-            applyFormStyle(form);
-            form->setContentsMargins(8,8,8,8);
-
-            reflection::visit_fields(ref, [&](std::string_view childName, auto& childRef, std::string_view childType)
-            {
-                // The path keeps the raw field name: it only names the editor
-                // for addressing, and a friendly name would change whenever
-                // someone reworded a label.
-                const QString childPath =
-                    QString("%1.%2").arg(path,
-                                         QString::fromUtf8(childName.data(),
-                                                           static_cast<int>(childName.size())));
-                QWidget* childEditor = createEditorFor(frame, childName, childRef, childType, childPath);
-                form->addRow(createFieldLabel<FieldType>(frame, childName), childEditor);
-            });
-
-            frame->setLayout(form);
-            return frame;
-        }
-        else
-        {
-            return createLeafEditor<FieldType>(parent, ref, path);
-        }
-    }
-
-    // ------------------------------------------------------------- reading back
-    //
-    // The read walks the widget subtree that the build produced, and is handed
-    // each editor directly.
-    //
-    // It used to be two independent walks joined only by a convention: the build
-    // stamped "field:<path>" onto every editor and the read went looking for that
-    // string with findChild. The two had to agree on traversal order AND on how a
-    // path is spelled, with nothing to enforce either -- a field that fell out of
-    // step stopped round-tripping in silence, and the fix was always to go and
-    // read both walks. findChild made it worse: it searches the whole subtree, so
-    // a page that had not been destroyed yet could answer for the one being read,
-    // which is the bug discardCurrentPage() below still carries a comment about.
-    //
-    // Structure is now the only thing the two sides share, and they cannot
-    // disagree about it, because one of them built it. The objectNames are still
-    // set, but purely so a test or the agent interface can address a field by
-    // name; nothing here reads them.
-
-    // The field widget of row `row` of a form.
-    QWidget* formFieldAt(QFormLayout* form, int row)
-    {
-        if (form == nullptr || row < 0 || row >= form->rowCount())
-        {
-            return nullptr;
-        }
-        QLayoutItem* item = form->itemAt(row, QFormLayout::FieldRole);
-        return item ? item->widget() : nullptr;
-    }
-
-    template <typename T>
-    void readEditorInto(QWidget* editor, T& out);
-
-    // A leaf: the widget handed in IS the editor the build made for this type.
-    template <typename T>
-    void readLeafInto(QWidget* editor, T& out)
-    {
-        using FieldType = std::decay_t<T>;
-        if (editor == nullptr)
-        {
-            return;
-        }
-
-        if constexpr (std::is_same_v<FieldType, std::string>)
-        {
-            if (auto* w = qobject_cast<QLineEdit*>(editor)) out = w->text().toStdString();
-        }
-        else if constexpr (helpers::StringLeaf<FieldType> && !std::is_same_v<FieldType, helpers::Color>)
-        {
-            if (auto* w = qobject_cast<QLineEdit*>(editor)) out = FieldType{w->text().toStdString()};
-        }
-        else if constexpr (std::is_same_v<FieldType, helpers::Color>)
-        {
-            // A container: the line edit, then the picker button.
-            if (auto* layout = editor->layout(); layout != nullptr && layout->count() > 0)
-            {
-                if (auto* w = qobject_cast<QLineEdit*>(layout->itemAt(0)->widget()))
-                {
-                    out = helpers::Color(w->text().toStdString());
-                }
-            }
-        }
-        else if constexpr (std::is_same_v<FieldType, bool>)
-        {
-            if (auto* w = qobject_cast<QCheckBox*>(editor)) out = w->isChecked();
-        }
-        else if constexpr (std::is_enum_v<FieldType>)
-        {
-            if (auto* w = qobject_cast<QComboBox*>(editor))
-            {
-                // Non-throwing: this runs on a user-interaction path, and an
-                // exception here would unwind through QApplication::notify().
-                // The combo is populated from the enum, so a miss means the page
-                // is stale -- keep the caller's existing value rather than
-                // inventing one.
-                if (const auto v = reflection::enum_traits<FieldType>::try_from_string(
-                        w->currentText().toStdString()))
-                {
-                    out = *v;
-                }
-                else
-                {
-                    SPDLOG_WARN("Ignoring unknown value '{}' for field '{}'.",
-                                w->currentText().toStdString(),
-                                editor->objectName().toStdString());
-                }
-            }
-        }
-        else if constexpr (std::is_integral_v<FieldType>)
-        {
-            if (auto* w = qobject_cast<QSpinBox*>(editor)) out = static_cast<FieldType>(w->value());
-        }
-        else if constexpr (std::is_floating_point_v<FieldType>)
-        {
-            if (auto* w = qobject_cast<QDoubleSpinBox*>(editor))
-                out = static_cast<FieldType>(w->value());
-        }
-    }
-
-    // Reads whatever createEditorFor() built for a field of type T.
-    template <typename T>
-    void readEditorInto(QWidget* editor, T& out)
-    {
-        using FieldType = std::decay_t<T>;
-        if (editor == nullptr)
-        {
-            return;
-        }
-
-        if constexpr (reflection::is_std_vector<FieldType>::value)
-        {
-            using Elem = typename reflection::is_std_vector<FieldType>::value_type;
-
-            // The container's second entry is the items area; its rows are the
-            // elements. Read the rows that are there NOW rather than the ones
-            // that were there at build time -- Add and Remove change the count
-            // after the fact, which is exactly what a positional index into a
-            // list captured during the build could not have survived.
-            auto* outer = editor->layout();
-            if (outer == nullptr || outer->count() < 2)
-            {
-                return;
-            }
-            QWidget* items = outer->itemAt(1)->widget();
-            QLayout* itemsLayout = items ? items->layout() : nullptr;
-            if (itemsLayout == nullptr)
-            {
-                return;
-            }
-
-            FieldType result;
-            for (int i = 0; i < itemsLayout->count(); ++i)
-            {
-                QWidget* row = itemsLayout->itemAt(i)->widget();
-                QLayout* rowLayout = row ? row->layout() : nullptr;
-                if (rowLayout == nullptr || rowLayout->count() < 1)
-                {
-                    continue;
-                }
-                // [0] is the element's editor, [1] its remove button. Keep this
-                // in step with addRow(): the row is read by position, so putting
-                // anything before the editor silently reads the wrong widget.
-                // Seeded from the element already at that index so a field the
-                // form does not render survives, as in the struct case below.
-                Elem value = (static_cast<std::size_t>(result.size()) < out.size())
-                                 ? out[static_cast<std::size_t>(result.size())]
-                                 : Elem{};
-                readEditorInto<Elem>(rowLayout->itemAt(0)->widget(), value);
-                result.push_back(std::move(value));
-            }
-            out = std::move(result);
-        }
-        else if constexpr (reflection::is_reflected_struct<FieldType>::value)
-        {
-            // An inset QFrame carrying a QFormLayout, one row per field, built in
-            // reflection order -- so read them back in reflection order.
-            auto* form = qobject_cast<QFormLayout*>(editor->layout());
-            int row = 0;
-            reflection::visit_fields(out, [&](std::string_view /*name*/, auto& ref,
-                                              std::string_view /*type*/)
-            {
-                readEditorInto(formFieldAt(form, row), ref);
-                ++row;
-            });
-        }
-        else
-        {
-            readLeafInto<FieldType>(editor, out);
-        }
-    }
-
-    // Patches `cfg` in place from the form's editors and returns it.
-    //
-    // The seed matters. This used to start from a default-constructed Config, so
-    // every field the form could not render -- an unsupported type, a missing
-    // editor -- was written back as the type default, silently destroying it on
-    // each Apply. Starting from the widget's live config means a field the form
-    // does not touch simply survives, which is what the agent's set_config path
-    // has always done (see patchedConfig in dashboard/agent/widget_methods.cpp).
+    // The copy the form edits, for as long as the form lives. Applied whole on
+    // Apply; seeded from the frame's stored config, not the live widget's,
+    // which holds the clamped copy -- seeding from that would write the clamp
+    // back on every Apply.
     template <typename Config>
-    Config readIntoConfig(QFormLayout* form, Config cfg)
+    struct WorkingCopy
     {
-        int row = 0;
-        reflection::visit_fields(cfg, [&](std::string_view /*name*/, auto& ref,
-                                          std::string_view /*typeName*/)
-        {
-            readEditorInto(formFieldAt(form, row), ref);
-            ++row;
-        });
-        return cfg;
-    }
+        Config config;
+    };
 
     template <typename Config>
-    QWidget* buildFormFromConfig(QWidget* parent, const Config& cfg)
+    QWidget* buildFormFromConfig(PropertiesPanel* panel, const Config& cfg)
     {
-        auto* page = new QWidget(parent);
+        auto* page = new QWidget(panel);
         auto* vbox = new QVBoxLayout(page);
-        vbox->setContentsMargins(0,0,0,0);
+        vbox->setContentsMargins(0, 0, 0, 0);
         vbox->setSpacing(0);
+
+        auto* working = new WorkingCopy<Config>{cfg};
         auto* scroll = new QScrollArea(page);
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);
-        auto* scrollContent = new QWidget(scroll);
-        auto* form = new QFormLayout();
-        applyFormStyle(form);
-        form->setContentsMargins(10, 8, 10, 8);
-        form->setVerticalSpacing(10);
-        reflection::visit_fields<Config>(cfg, [&](std::string_view name, auto& ref, std::string_view type)
-        {
-            const QString fieldPath = QString::fromUtf8(name.data(), static_cast<int>(name.size()));
-            QWidget* editor = createEditorFor(scrollContent, name, ref, type, fieldPath);
-            form->addRow(createFieldLabel<Config>(scrollContent, name), editor);
-        });
-        scrollContent->setLayout(form);
-        scroll->setWidget(scrollContent);
-        vbox->addWidget(scroll, 1); // let the scroll area take all remaining space
-        // Why Apply is unavailable, said next to Apply. A per-field message
-        // under each row would be closer to the offending field, but it would
-        // mean wrapping the editors -- which readLeafFromWidget cannot tolerate
-        // -- and it would push the button off-screen on a panel this narrow.
-        // The field itself turns red and carries the reason as a tooltip; this
-        // is the aggregate, so the disabled button always explains itself.
+        auto* form = new qt_helpers::ReflectedForm(working->config, scroll);
+        // After the form's editors are gone: QWidget's destructor deletes its
+        // children before destroyed() is emitted.
+        QObject::connect(form, &QObject::destroyed, [working]() { delete working; });
+        scroll->setWidget(form);
+        vbox->addWidget(scroll, 1);
+
+        // Why Apply is unavailable, said next to Apply. The field itself turns
+        // red and carries the reason as a tooltip; this is the aggregate.
         auto* problemsLabel = new QLabel(page);
         problemsLabel->setObjectName("field_problems");
         problemsLabel->setWordWrap(true);
@@ -963,77 +331,32 @@ namespace
         applyBtn->setMinimumHeight(28);
         applyBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         auto* bottom = new QHBoxLayout();
-        bottom->setContentsMargins(8,8,8,8);
+        bottom->setContentsMargins(8, 8, 8, 8);
         bottom->addWidget(applyBtn);
         bottom->setSizeConstraint(QLayout::SetMinimumSize);
-        vbox->addLayout(bottom, 0); // persistent bottom bar
+        vbox->addLayout(bottom, 0);
 
-        const auto revalidate = [page, problemsLabel, applyBtn]()
+        const auto revalidate = [form, problemsLabel, applyBtn]()
         {
-            const QStringList problems = fieldProblems(page);
+            const QStringList problems = form->problems();
             problemsLabel->setVisible(!problems.isEmpty());
             problemsLabel->setText(problems.join('\n'));
             applyBtn->setEnabled(problems.isEmpty());
-            applyBtn->setToolTip(problems.isEmpty()
-                                     ? QString()
-                                     : QString("Fix the highlighted field(s) first."));
+            applyBtn->setToolTip(problems.isEmpty() ? QString()
+                                                    : QString("Fix the highlighted field(s) first."));
         };
-
-        for (QLineEdit* line : page->findChildren<QLineEdit*>())
-        {
-            // Every rule-checked field, problem or not: its own recheck runs
-            // first (connected when it was built), then this.
-            if (line->property(kFieldProblemProperty).isValid())
-            {
-                QObject::connect(line, &QLineEdit::textChanged, page,
-                                 [revalidate](const QString&) { revalidate(); });
-            }
-        }
-
-        // Run once for the config as loaded. A file edited by hand can already
-        // hold a bad key, and the panel should say so on selection rather than
-        // waiting for someone to type in the field.
+        QObject::connect(form, &qt_helpers::ReflectedForm::problemsChanged, page, revalidate);
+        // Once for the config as loaded: a hand-edited file can already hold a
+        // bad key, and the panel should say so on selection.
         revalidate();
-        page->setLayout(vbox);
 
-        PropertiesPanel* that = qobject_cast<PropertiesPanel*>(parent);
-        QObject::connect(applyBtn, &QPushButton::clicked, page, [form, that]()
+        QObject::connect(applyBtn, &QPushButton::clicked, page, [panel, working]()
         {
-            if (!that || !that->selected()) return;
-            QWidget* w = that->selected();
-            SelectionFrame* frame = qobject_cast<SelectionFrame*>(w);
-            if (!frame) return; // editor always wraps in SelectionFrame
-
-            bool applied = false;
-
-            // One history entry per Apply, closed when this handler returns. The
-            // transaction discards itself if every field came back the same, so
-            // pressing Apply without changing anything does not add an undo step
-            // that appears to do nothing.
-            const Canvas::EditTransaction tx(that->canvas(), Canvas::EditSource::Widget);
-
-            // Visit the stored config rather than switching on the type and
-            // casting the live widget back to it. The variant already knows
-            // which alternative it holds, so there is no cast to get wrong --
-            // the previous version needed qobject_cast specifically because a
-            // static_cast would have been undefined behaviour if the frame's
-            // declared type and its actual child ever disagreed.
-            //
-            // It also reads the seed from the frame's own config, which is the
-            // configured value; the live widget's is the clamped one, so seeding
-            // from there would have written the clamp back on every Apply.
-            std::visit(
-                [&](const auto& current)
-                {
-                    using cfg_t = std::decay_t<decltype(current)>;
-                    if constexpr (!std::is_same_v<cfg_t, std::monostate>)
-                    {
-                        applied = frame->applyConfig(readIntoConfig<cfg_t>(form, current));
-                    }
-                },
-                frame->config());
-
-            if (!applied)
+            auto* frame = qobject_cast<SelectionFrame*>(panel->selected());
+            if (frame == nullptr) return;
+            // One history entry per Apply; discarded if nothing changed.
+            const Canvas::EditTransaction tx(panel->canvas(), Canvas::EditSource::Widget);
+            if (!frame->applyConfig(working->config))
             {
                 SPDLOG_ERROR("Apply did nothing for '{}': the frame holds no configuration.",
                              frame->objectName().toStdString());

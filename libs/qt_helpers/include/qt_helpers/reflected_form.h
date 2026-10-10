@@ -447,13 +447,12 @@ struct ReflectedFormBuilder
         const std::weak_ptr<std::function<void()>> weak = rebuild;
         *rebuild = [self = *this, rows, rows_layout, &items, field_name, path, weak]() {
             const std::shared_ptr<std::function<void()>> again = weak.lock();
+            // Deleted now, not later: a row left alive holds references into
+            // storage the vector may have just reallocated. Safe because a
+            // row's own remove button queues this rather than calling it.
             while (QLayoutItem* item = rows_layout->takeAt(0))
             {
-                if (QWidget* widget = item->widget())
-                {
-                    widget->hide();
-                    widget->deleteLater();
-                }
+                delete item->widget();
                 delete item;
             }
             for (std::size_t i = 0; i < items.size(); ++i)
@@ -492,36 +491,53 @@ struct ReflectedFormBuilder
         return host;
     }
 
-    // A human-readable name for one element of a list of structs: its label
-    // when it has one, else the first non-empty string field, else "entry N".
+    // A human-readable name for one element of a list of structs: its label,
+    // else its subscription's expression, else any other string. The expression
+    // ranks above a topic key because every trace on one topic shares the key,
+    // and a list where every row reads "vehicle/engine/rpm" names nothing.
     template <typename Item>
     static QString elementLabel(const Item& item, std::size_t index)
     {
         QString label;
+        QString expression;
         QString fallback;
+        const auto offer = [&fallback](const std::string& text) {
+            if (!text.empty() && fallback.isEmpty())
+            {
+                fallback = QString::fromStdString(text);
+            }
+        };
         reflection::visit_fields(item, [&](std::string_view field_name, const auto& field, std::string_view) {
             using F = std::decay_t<decltype(field)>;
             if constexpr (std::is_same_v<F, std::string>)
             {
-                if (!field.empty() && field_name == "label")
+                if (field_name == "label" && !field.empty())
                 {
                     label = QString::fromStdString(field);
                 }
-                else if (!field.empty() && fallback.isEmpty())
+                else
                 {
-                    fallback = QString::fromStdString(field);
+                    offer(field);
                 }
+            }
+            else if constexpr (helpers::StringLeaf<F> && !std::is_same_v<F, helpers::Color>)
+            {
+                offer(field.str());
             }
             else if constexpr (reflection::is_reflected_struct_v<F>)
             {
-                // A subscription names its signal by its expression.
                 reflection::visit_fields(field, [&](std::string_view inner, const auto& value, std::string_view) {
-                    if constexpr (std::is_same_v<std::decay_t<decltype(value)>, std::string>)
+                    using V = std::decay_t<decltype(value)>;
+                    if constexpr (std::is_same_v<V, std::string>)
                     {
-                        if (inner == "expression" && !value.empty() && fallback.isEmpty())
+                        if (inner == "expression" && !value.empty())
                         {
-                            fallback = QString::fromStdString(value);
+                            expression = QString::fromStdString(value);
                         }
+                    }
+                    else if constexpr (helpers::StringLeaf<V> && !std::is_same_v<V, helpers::Color>)
+                    {
+                        offer(value.str());
                     }
                 });
             }
@@ -529,6 +545,10 @@ struct ReflectedFormBuilder
         if (!label.isEmpty())
         {
             return label;
+        }
+        if (!expression.isEmpty())
+        {
+            return expression;
         }
         return fallback.isEmpty() ? QObject::tr("entry %1").arg(index + 1) : fallback;
     }
@@ -579,15 +599,10 @@ struct ReflectedFormBuilder
         const auto rebuildElement = [self = *this, element, list, &items, path]() {
             // Wholesale: the old form's editors hold references into a vector
             // that may just have reallocated.
-            for (QObject* child : element->children())
-            {
-                if (auto* widget = qobject_cast<QWidget*>(child))
-                {
-                    widget->hide();
-                    widget->deleteLater();
-                }
-            }
+            // Deleted now, for the same reason as a value list's rows; nothing
+            // that triggers this lives inside the element form.
             delete element->layout();
+            qDeleteAll(element->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly));
             const int row = list->currentRow();
             if (row < 0 || static_cast<std::size_t>(row) >= items.size())
             {

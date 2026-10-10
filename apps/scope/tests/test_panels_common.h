@@ -42,6 +42,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPixmap>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QToolButton>
 #include <QTreeWidget>
