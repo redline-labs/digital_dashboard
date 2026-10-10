@@ -9,9 +9,7 @@
 # scope app draws its plots on CachedPaintWidget and resolves colours the same
 # way.
 #
-# find_package is repeated here because imported targets are directory-scoped --
-# the same reason libs/agent_control/CMakeLists.txt has to do it.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+# Qt itself is found once, in the root CMakeLists, before libs/ is added.
 
 # Static rather than header-only for one file: quitOnSignals keeps a handler
 # and a pipe that must exist once per process.

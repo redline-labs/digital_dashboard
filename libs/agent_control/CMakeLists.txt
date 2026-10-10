@@ -4,10 +4,6 @@
 # bridge driver and the collision would be genuinely confusing. The user-facing
 # CLI flag is still --mcp.
 #
-# libs/ is added before dashboard/ in the root CMakeLists, so the Qt targets the
-# dashboard finds are not visible here yet; find them again in this scope.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
-
 # AUTOMOC is enabled in dashboard/'s directory scope, not this one.
 set(CMAKE_AUTOMOC ON)
 
