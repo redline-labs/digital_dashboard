@@ -14,6 +14,8 @@
 #include "pub_sub/node_identity.h"
 #include "pub_sub/schema_registry.h"
 #include "pub_sub/session_manager.h"
+
+#include <zenoh.hxx>
 #include "pub_sub/topic_directory.h"
 #include "pub_sub/topic_key.h"
 #include "pub_sub/zenoh_publisher.h"

@@ -23,6 +23,7 @@
 // Services and caller share this process's session, which is how zenoh routes a
 // local query to a local queryable. `net`.
 
+#include "pub_sub/session_manager.h"
 #include "pub_sub/dynamic_service_call.h"
 #include "pub_sub/zenoh_service.h"
 

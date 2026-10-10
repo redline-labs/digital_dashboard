@@ -23,6 +23,8 @@
 // skips rather than failing, since it would be testing the environment.
 #include "pub_sub/session_manager.h"
 
+#include <zenoh.hxx>
+
 #include <spdlog/spdlog.h>
 
 #include <memory>

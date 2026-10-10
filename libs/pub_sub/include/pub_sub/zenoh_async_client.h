@@ -3,35 +3,26 @@
 
 #include <atomic>
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <zenoh.hxx>
-
 #include <capnp/message.h>
 #include <capnp/serialize.h>
 
-#include "pub_sub/capnp_encoding.h"
-#include "pub_sub/capnp_payload.h"
-#include "pub_sub/zenoh_payload.h"
-#include "pub_sub/schema_registry.h"
-#include "pub_sub/session_manager.h"
-
-#include "spdlog/spdlog.h"
+#include "pub_sub/detail/byte_query.h"
+#include "pub_sub/typed_decode.h"
 
 namespace pub_sub
 {
 
 // Cap'n Proto-backed GET client that does not block.
 //
-// ZenohClient is the same thing with a FifoChannel and a loop around recv(),
-// which is right for a CLI tool and wrong for anything with a UI or an event
-// loop: it parks the calling thread until a reply or the timeout. This one hands
-// the reply to a callback on a zenoh thread instead.
+// ZenohClient is the same thing parking the calling thread until a reply or the
+// timeout, which is right for a CLI tool and wrong for anything with a UI or an
+// event loop. This one hands the reply to a callback on a zenoh thread instead.
 //
 // THE CALLBACK RUNS ON A ZENOH THREAD, not the caller's. It must not block and
 // must not touch Qt objects -- hop with QMetaObject::invokeMethod, or post to
@@ -59,9 +50,9 @@ class ZenohAsyncClient
         // or nobody answered inside the timeout. Indistinguishable on the wire,
         // and the caller's response is the same either way.
         NoReply,
-        // Something replied, and the payload was not a whole number of capnp
-        // words. A truncated message would otherwise decode as a message whose
-        // every field is default -- a plausible answer rather than a failure.
+        // Something replied, and it was another schema or revision, not a
+        // whole number of capnp words, or not readable. Each would otherwise
+        // decode as a plausible answer rather than a failure.
         Malformed,
         // The get() call itself could not be made.
         Failed,
@@ -86,10 +77,8 @@ class ZenohAsyncClient
     ZenohAsyncClient(std::string keyexpr, std::uint64_t timeoutMs) :
         mKeyExpr(std::move(keyexpr)),
         mTimeoutMs(timeoutMs),
-        mSession(pub_sub::SessionManager::getOrCreate())
+        mGate(std::make_shared<TypedGate<ResponseT>>(mKeyExpr))
     {
-        SPDLOG_DEBUG("Async client on '{}' for schemas '{}'->'{}'", mKeyExpr,
-                     schema_traits<RequestT>::name, schema_traits<ResponseT>::name);
     }
 
     ZenohAsyncClient(const ZenohAsyncClient&) = delete;
@@ -97,117 +86,47 @@ class ZenohAsyncClient
 
     const std::string& key() const { return mKeyExpr; }
 
-    // Send one request.
-    //
-    //   fill:     void(RequestBuilder&) -- populates a builder owned by this
-    //             request alone, so overlapping calls cannot share state.
-    //   on_reply: void(Status, const ResponseReader*) -- called exactly once,
-    //             on a zenoh thread. `response` is non-null only for Status::Ok
-    //             and is valid only for the duration of the call.
-    //
-    // Returns false when the request could not be sent at all, in which case
-    // on_reply has already been called with Status::Failed -- so a caller that
-    // only handles the callback still handles every outcome.
+    // `fill(RequestBuilder&)` writes the request; `on_reply(Status, const
+    // ResponseReader*)` gets the outcome, once. Returns false when the request
+    // could not be sent, having already called `on_reply` with Failed.
     template <typename Fill, typename Callback>
     bool request(Fill&& fill, Callback&& on_reply)
     {
-        // Shared rather than captured by value: both closures need it, and
-        // whichever fires last is what releases it.
         auto state = std::make_shared<Pending>(std::forward<Callback>(on_reply));
-
-        if (!mSession)
-        {
-            state->deliver(Status::Failed, nullptr);
-            return false;
-        }
 
         capnp::MallocMessageBuilder message;
         auto root = message.template initRoot<RequestT>();
         fill(root);
-
         const kj::Array<capnp::word> words = capnp::messageToFlatArray(message);
-        const kj::ArrayPtr<const kj::byte> view = words.asBytes();
-        std::vector<std::uint8_t> request_bytes(view.size());
-        std::memcpy(request_bytes.data(), view.begin(), view.size());
+        const kj::ArrayPtr<const kj::byte> bytes = words.asBytes();
 
-        try
-        {
-            zenoh::Session::GetOptions options = zenoh::Session::GetOptions::create_default();
-            options.timeout_ms = mTimeoutMs;
-            options.payload.emplace(std::move(request_bytes));
-            options.encoding.emplace(kCapnpEncodingMime);
-            options.encoding->set_schema(std::string(schema_traits<RequestT>::name));
-
-            const std::string key = mKeyExpr;
-
-            mSession->get(
-                zenoh::KeyExpr(mKeyExpr), "",
-                [state, key](const zenoh::Reply& reply) {
-                    // Nothing may escape into zenoh's Rust frame.
-                    try
-                    {
-                        if (state->delivered.load(std::memory_order_acquire))
-                        {
-                            // A second responder. The first answer stands; more
-                            // than one node serving a key is a configuration
-                            // problem, not something to resolve here.
-                            return;
-                        }
-                        if (!reply.is_ok())
-                        {
-                            return;
-                        }
-
-                        const zenoh::Sample& sample = reply.get_ok();
-                        // Borrowed from the sample rather than copied out of it.
-                        // This is the map widget's path, where a reply is a
-                        // 64-tile batch and the copy was megabytes -- see
-                        // pub_sub/zenoh_payload.h. `sample` is alive for this
-                        // whole callback, which is what the borrow requires.
-                        const ZenohPayload payload(sample.get_payload());
-                        if (payload.empty())
-                        {
-                            SPDLOG_WARN("Reply from '{}' was not a whole number of capnp words",
-                                        key);
-                            state->deliver(Status::Malformed, nullptr);
-                            return;
-                        }
-
-                        capnp::FlatArrayMessageReader reader(payload.words());
-                        const ResponseReader response = reader.template getRoot<ResponseT>();
+        // The gate by value: a reply may arrive after this client is gone.
+        const std::shared_ptr<TypedGate<ResponseT>> gate = mGate;
+        const bool sent = detail::queryBytes(
+            mKeyExpr, schema_traits<RequestT>::name, schema_traits<RequestT>::layout,
+            std::vector<std::uint8_t>(bytes.begin(), bytes.end()), mTimeoutMs,
+            [state, gate](const detail::ByteMessage& reply) {
+                if (state->delivered.load(std::memory_order_acquire))
+                {
+                    return;
+                }
+                if (!gate->admit(reply.schema_name, reply.layout) ||
+                    !decodeAs<ResponseT>(*gate, reply.payload, [&](ResponseReader response) {
                         state->deliver(Status::Ok, &response);
-                    }
-                    catch (const std::exception& e)
-                    {
-                        SPDLOG_ERROR("Reply from '{}' could not be decoded: {}", key, e.what());
-                        state->deliver(Status::Malformed, nullptr);
-                    }
-                    catch (...)
-                    {
-                        state->deliver(Status::Malformed, nullptr);
-                    }
-                },
-                [state]() {
-                    // The drop handler: the query is over. If nothing was
-                    // delivered, nothing is coming -- this is where a timeout or
-                    // an unserved key turns into an answer, so a caller never
-                    // waits forever for a callback that was never going to fire.
-                    state->deliver(Status::NoReply, nullptr);
-                },
-                std::move(options));
-        }
-        catch (const std::exception& e)
+                    }))
+                {
+                    state->deliver(Status::Malformed, nullptr);
+                }
+            },
+            [state] { state->deliver(Status::NoReply, nullptr); });
+        if (!sent)
         {
-            SPDLOG_ERROR("Request to '{}' failed: {}", mKeyExpr, e.what());
             state->deliver(Status::Failed, nullptr);
-            return false;
         }
-
-        return true;
+        return sent;
     }
 
   private:
-    // One request's worth of state, owned by the two zenoh closures.
     struct Pending
     {
         template <typename Callback>
@@ -217,9 +136,6 @@ class ZenohAsyncClient
 
         void deliver(Status status, const ResponseReader* response)
         {
-            // exchange, not load-then-store: the reply callback and the drop
-            // handler run on zenoh threads and can race, and the whole promise
-            // of this class is that the caller's callback runs once.
             if (delivered.exchange(true, std::memory_order_acq_rel))
             {
                 return;
@@ -236,9 +152,9 @@ class ZenohAsyncClient
 
     std::string mKeyExpr;
     std::uint64_t mTimeoutMs;
-    std::shared_ptr<zenoh::Session> mSession;
+    std::shared_ptr<TypedGate<ResponseT>> mGate;
 };
 
-} // namespace pub_sub
+}  // namespace pub_sub
 
-#endif // ZENOH_ASYNC_CLIENT_H_
+#endif  // ZENOH_ASYNC_CLIENT_H_

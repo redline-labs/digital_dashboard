@@ -43,6 +43,7 @@ add_library(zenoh_pub_sub STATIC
     # translation unit that touches the bus. See detail/byte_publisher.h.
     detail/byte_publisher.cpp
     detail/byte_subscriber.cpp
+    detail/byte_query.cpp
 
     # Generic capnp<->JSON over the dynamic API, and topic observation. Shared by
     # nodes/inspect and the agent control interface so the two cannot disagree
@@ -67,14 +68,16 @@ add_library(zenoh_pub_sub STATIC
 
 target_include_directories(zenoh_pub_sub PUBLIC
     include
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../include"  # TODO: This is a hack to get the helpers.h file included.
 )
 
-target_link_libraries(zenoh_pub_sub PUBLIC
+target_link_libraries(zenoh_pub_sub
+    PRIVATE
+    # Behind ExpressionEvaluator's Impl; no public header names it.
+    exprtk::exprtk
+    PUBLIC
     capnp
     schemas
     spdlog::spdlog
-    exprtk::exprtk
     zenohcxx::zenohc
     helpers
     reflection
@@ -180,7 +183,7 @@ add_project_test(TARGET pub_sub_test_sample_metadata LABELS pub_sub net)
 
 # SessionManager lifecycle. Unlike the encoding test this one does open real
 # zenoh sessions -- releasing one and opening another is the whole point -- so
-# it skips itself (exit 0, with a warning) on a host where none can be opened.
+# it skips itself (PROJECT_TEST_SKIP_CODE, with a warning) on a host where none can be opened.
 add_executable(pub_sub_test_session_manager
     test_session_manager.cpp
 )

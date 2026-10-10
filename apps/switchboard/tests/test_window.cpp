@@ -9,6 +9,7 @@
 
 #include "switchboard/switchboard_window.h"
 
+#include "pub_sub/session_manager.h"
 #include "pub_sub/zenoh_service.h"
 
 #include "bd992.capnp.h"

@@ -23,6 +23,8 @@
 // zenoh routes a local query to a local queryable. That makes this a `net` test:
 // it opens a session.
 
+#include "pub_sub/schema_layout.h"
+#include "pub_sub/session_manager.h"
 #include "pub_sub/zenoh_async_client.h"
 #include "pub_sub/zenoh_service.h"
 
@@ -273,6 +275,75 @@ void test_destroying_the_client_mid_flight_is_safe()
 
 } // namespace
 
+// A request stamped as another schema is answered with an error, not decoded:
+// capnp would read its bytes as a plausible request and the handler would act
+// on it.
+void test_a_request_of_another_schema_is_refused()
+{
+    std::atomic<int> handled{0};
+    Service service("test/async_client/wrong_request",
+                    [&handled](const CanBridgeSetBitrateRequest::Reader&,
+                               CanBridgeSetBitrateResponse::Builder& response) {
+                        ++handled;
+                        response.setOk(true);
+                    });
+
+    capnp::MallocMessageBuilder message;
+    message.initRoot<CanBridgeSetBitrateResponse>().setOk(true);
+    const auto words = capnp::messageToFlatArray(message);
+    const auto bytes = words.asBytes();
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    int ok_replies = 0;
+    pub_sub::detail::queryBytes(
+        "test/async_client/wrong_request", "CanBridgeSetBitrateResponse", pub_sub::kNoLayout,
+        std::vector<std::uint8_t>(bytes.begin(), bytes.end()), 2000,
+        [&](const pub_sub::detail::ByteMessage&) {
+            const std::lock_guard<std::mutex> lock(mutex);
+            ++ok_replies;
+        },
+        [&] {
+            const std::lock_guard<std::mutex> lock(mutex);
+            done = true;
+            cv.notify_all();
+        });
+    std::unique_lock<std::mutex> lock(mutex);
+    cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; });
+
+    check(done, "the query completed");
+    check(handled.load() == 0, "the handler never saw a request of another schema");
+    check(ok_replies == 0, "and it was answered with an error, not a reply");
+}
+
+// A reply written against another revision of the response schema is Malformed,
+// not Ok with plausible wrong fields.
+void test_a_reply_of_another_revision_is_refused()
+{
+    const std::uint64_t wrong = pub_sub::schema_traits<CanBridgeSetBitrateResponse>::layout + 1;
+    pub_sub::detail::ByteQueryable queryable(
+        "test/async_client/wrong_reply", "CanBridgeSetBitrateRequest", "CanBridgeSetBitrateResponse",
+        wrong, [](const pub_sub::detail::ByteMessage&) {
+            capnp::MallocMessageBuilder message;
+            message.initRoot<CanBridgeSetBitrateResponse>().setActualNominalBps(500000);
+            const auto words = capnp::messageToFlatArray(message);
+            const auto bytes = words.asBytes();
+            return pub_sub::detail::ByteQueryable::Answer{
+                std::vector<std::uint8_t>(bytes.begin(), bytes.end()), {}};
+        });
+
+    Client client("test/async_client/wrong_reply", 2000);
+    Outcome outcome;
+    client.request([](CanBridgeSetBitrateRequest::Builder&) {},
+                   [&outcome](Client::Status status, const CanBridgeSetBitrateResponse::Reader* response) {
+                       outcome.record(status, response);
+                   });
+    check(outcome.awaitOne(), "the client was told");
+    check(outcome.status == Client::Status::Malformed, "a reply of another revision is Malformed");
+    check(!outcome.sawResponsePointer, "and comes with no response to misread");
+}
+
 int main()
 {
     spdlog::set_level(spdlog::level::info);
@@ -289,6 +360,8 @@ int main()
     test_two_responders_deliver_one_answer();
     test_overlapping_requests_do_not_share_state();
     test_destroying_the_client_mid_flight_is_safe();
+    test_a_request_of_another_schema_is_refused();
+    test_a_reply_of_another_revision_is_refused();
 
     pub_sub::SessionManager::shutdown();
 

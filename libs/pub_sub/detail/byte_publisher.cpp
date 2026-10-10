@@ -1,4 +1,5 @@
 #include "pub_sub/detail/byte_publisher.h"
+#include "layout_attachment.h"
 
 #include "pub_sub/capnp_encoding.h"
 #include "pub_sub/schema_layout.h"
@@ -62,15 +63,7 @@ BytePublisher::BytePublisher(std::string_view keyexpr, std::string_view schema_n
     impl_->keyexpr = std::string(keyexpr);
     impl_->schema_name = std::string(schema_name);
     impl_->layout = layout;
-    if (layout != kNoLayout)
-    {
-        std::vector<std::uint8_t> stamp(sizeof(layout));
-        for (std::size_t i = 0; i < stamp.size(); ++i)
-        {
-            stamp[i] = static_cast<std::uint8_t>((layout >> (i * 8)) & 0xffu);
-        }
-        impl_->layout_stamp.emplace(std::move(stamp));
-    }
+    impl_->layout_stamp = layoutAttachment(layout);
 
     // Checked here, at the point a key enters the system, rather than assumed.
     // Refusing outright is deliberate: every way a bad key can be wrong is a

@@ -44,7 +44,6 @@ here, so the two halves cannot disagree as they once did.
 | `pub_sub/capnp_encoding.h` | `kCapnpEncodingMime` and `schemaNameFromEncoding()`. |
 | `pub_sub/schema_layout.h` | `layoutHash()`, `layoutHashFor()`, `layoutHashOfDescriptor()`: which revision of a schema some bytes were written against. Registered schemas are fingerprinted by the registry generator at build time; `layoutHashFor()` is a table lookup. |
 | `pub_sub/capnp_payload.h` | `WordAlignedPayload`: word-aligned capnp access to any byte buffer. |
-| `pub_sub/zenoh_payload.h` | `ZenohPayload`: the same over a live `zenoh::Bytes`, borrowing rather than copying. |
 | `pub_sub/can_frame.h` | `fromCapnp()` and `toCapnp()` between the `CanFrame` schema and `helpers::CanFrame`. The length copied is what was both declared and supplied, capped at 64. |
 | `pub_sub/capnp_json.h` | `capnpToJson`, `jsonToCapnp`, `describeSchema`, `fixedListLength`. Unknown field names are errors. |
 | `pub_sub/detail/` | `BytePublisher` and `ByteSubscriber`: the zenoh boundary. The seam, not the API. |
@@ -103,8 +102,8 @@ A payload that is not a whole number of 8-byte words is refused, because capnp
 reads a short buffer as a message whose fields are all default. `evaluate<T>()`
 returns `std::nullopt` for an unusable sample rather than 0.0, which used to
 drive an oil-pressure gauge to zero on a corrupt packet. `WordAlignedPayload`
-and `ZenohPayload` make word alignment true by construction instead of by the
-accident that `operator new` aligns.
+makes word alignment true by construction instead of by the accident that
+`operator new` aligns.
 
 **Keys** are `[A-Za-z0-9_-/]`, checked with `topicKeyProblem()` in the editor,
 at config load and in the publisher. `%` is the mangling separator, `@` makes a
@@ -136,22 +135,28 @@ aborted the process. `isOpen()` reports without opening.
 `PUB_SUB_NO_DISCOVERY=1` keeps a session off the machine's bus; every `net`
 test sets it.
 
-**Services.** A handler that throws answers that caller with an error reply
-instead of taking the node down. `ZenohAsyncClient` fires its callback exactly
+**Services.** Requests and replies carry the schema name and revision, and
+each side judges the other's through `SampleGate`: a request of another schema
+is answered with an error rather than handed to the handler, and a reply of
+another revision is `Malformed` to an async client. A handler that throws, or
+reads a malformed request, answers that caller with an error reply instead of
+taking the node down. `ZenohAsyncClient` fires its callback exactly
 once, first reply wins, and cannot tell an unserved key from a timeout because
 the wire cannot. `callService()`, shared by `inspect call` and switchboard,
 collects every reply so a key served by two nodes is visible.
 
 **Header cost.** `<zenoh.hxx>` is about 89,000 preprocessed lines and stays
-out of the publisher and subscriber headers behind `detail::BytePublisher` and
-`ByteSubscriber`; `expression_evaluator.h` hides exprtk the same way. Widgets
-include `expression_subscriber.h`, the lean header; `zenoh_subscriber.h` adds
-capnp, and the service and client headers include zenoh itself.
+out of every public header: publishers, subscribers, services and clients go
+through `detail::BytePublisher`, `ByteSubscriber` and `ByteQueryable`/
+`queryBytes`, and `session_manager.h` only declares `zenoh::Session`.
+`expression_evaluator.h` hides exprtk the same way. Widgets include
+`expression_subscriber.h`, the lean header; `zenoh_subscriber.h` adds capnp.
+Code that uses the zenoh API directly includes `<zenoh.hxx>` itself.
 
 ## Tests
 
-Every `net` test opens a real session and skips itself, exit 0 with a warning,
-on a host where none can be opened.
+Every `net` test opens a real session and skips itself (`PROJECT_TEST_SKIP_CODE`,
+with a warning) on a host where none can be opened.
 
 | Target | Labels | Proves |
 | --- | --- | --- |

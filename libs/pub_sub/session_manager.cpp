@@ -1,4 +1,7 @@
 #include "pub_sub/session_manager.h"
+
+#include <zenoh.hxx>
+
 #include "spdlog/spdlog.h"
 #include <condition_variable>
 #include <cstdlib>

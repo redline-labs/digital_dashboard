@@ -1,13 +1,21 @@
 #ifndef ZENOH_SESSION_MANAGER_H
 #define ZENOH_SESSION_MANAGER_H
 
-#include "zenoh.hxx"
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+// Declared, not included: <zenoh.hxx> is 89,000 preprocessed lines, and most
+// includers only ask whether there is a session. One that uses the session's
+// API includes zenoh itself.
+namespace zenoh
+{
+class Session;
+class Config;
+}  // namespace zenoh
 
 namespace pub_sub
 {

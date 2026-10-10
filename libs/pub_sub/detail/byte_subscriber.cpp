@@ -1,4 +1,5 @@
 #include "pub_sub/detail/byte_subscriber.h"
+#include "layout_attachment.h"
 
 #include <array>
 #include <vector>
@@ -35,25 +36,7 @@ class ZenohSampleMeta final : public SampleMeta
     std::optional<std::uint64_t> layout() const override
     {
         const auto attachment = sample_.get_attachment();
-        if (!attachment)
-        {
-            return std::nullopt;
-        }
-        // Size first and into a fixed buffer: this runs on every sample of a
-        // typed subscription, and as_vector() allocated for eight bytes.
-        const zenoh::Bytes& attached = attachment->get();
-        std::array<std::uint8_t, sizeof(std::uint64_t)> bytes{};
-        if (attached.size() != bytes.size() || attached.reader().read(bytes.data(), bytes.size()) != bytes.size())
-        {
-            // Someone else's attachment on one of our topics. Not a fingerprint.
-            return std::nullopt;
-        }
-        std::uint64_t value = 0;
-        for (std::size_t i = 0; i < bytes.size(); ++i)
-        {
-            value |= static_cast<std::uint64_t>(bytes[i]) << (i * 8);
-        }
-        return value;
+        return attachment ? layoutFromAttachment(attachment->get()) : std::nullopt;
     }
 
     std::string_view keyexpr() const override { return sample_.get_keyexpr().as_string_view(); }
