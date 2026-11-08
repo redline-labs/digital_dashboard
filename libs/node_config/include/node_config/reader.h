@@ -4,6 +4,8 @@
 #include <cmath>
 #include <concepts>
 #include <cstdint>
+#include <initializer_list>
+#include <string_view>
 #include <limits>
 #include <string>
 #include <type_traits>
@@ -118,6 +120,12 @@ void readNumber(const YAML::Node& parent, const char* key, T& out, Context& cont
 // are refused by zenoh outright and `@` makes a segment verbatim, so the topic
 // is silently never seen. `field` names it in the message.
 void checkTopicKey(const std::string& key, const std::string& field, Context& context);
+
+// Fails for every key of the mapping `node` that is not in `known`, naming it
+// under `where`. A misspelt key is otherwise a setting silently left at its
+// default. Not a mapping (or absent) is not this check's business.
+void rejectUnknownKeys(const YAML::Node& node, std::initializer_list<std::string_view> known, Context& context,
+                       const std::string& where);
 
 }  // namespace node_config
 

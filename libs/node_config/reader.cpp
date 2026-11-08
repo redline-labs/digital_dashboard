@@ -2,6 +2,8 @@
 
 #include "node_config/reader.h"
 
+#include <algorithm>
+
 #include <spdlog/spdlog.h>
 
 #include "pub_sub/topic_key.h"
@@ -67,6 +69,23 @@ void checkTopicKey(const std::string& key, const std::string& field, Context& co
     if (const std::string problem = pub_sub::topicKeyProblem(key); !problem.empty())
     {
         context.fail(field + " ('" + key + "'): " + problem);
+    }
+}
+
+void rejectUnknownKeys(const YAML::Node& node, std::initializer_list<std::string_view> known, Context& context,
+                       const std::string& where)
+{
+    if (!node || !node.IsMap())
+    {
+        return;
+    }
+    for (const auto& entry : node)
+    {
+        const std::string key = entry.first.as<std::string>();
+        if (std::find(known.begin(), known.end(), key) == known.end())
+        {
+            context.fail((where.empty() ? std::string("(top level)") : where) + ": unknown key '" + key + "'");
+        }
     }
 }
 

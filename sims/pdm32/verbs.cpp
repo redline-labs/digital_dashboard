@@ -1,5 +1,7 @@
-// pdm32_sim run | images | disasm.
+// pdm32_sim serve | run | images | disasm.
 //
+//   serve [-c CONFIG] [--mcp[=SOCK]] [--scenario S.json] [--firmware HEX] [--engine E] [--stepped] [--allow-write]
+//       the PDM on the bus (server.h); with --mcp, prints "AGENT_READY <socket> <pid>" once it is serving
 //   run SCENARIO.json [--firmware HEX] [--engine interp|block|jit]
 //       runs a scenario, prints its trace and expectations; exit status 0 if all passed, 1 if not
 //   images SCENARIO.json --out DIR
@@ -14,7 +16,14 @@
 
 #include <spdlog/spdlog.h>
 
+#include "agent_control/log_ring.h"
+#include "cli/interrupt.h"
+#include "agent_control/mcp_option.h"
 #include "hc08/disasm.h"
+#include "node_health/reporter.h"
+#include "pub_sub/node_identity.h"
+#include "server.h"
+#include "serve_config.h"
 #include "hc08/image.h"
 #include "pdm32/top/scenario.h"
 
@@ -35,6 +44,63 @@ void addEngineOption(cxxopts::Options& options) {
 }
 
 }  // namespace
+
+void addServeOptions(cxxopts::Options& options) {
+    options.add_options()("c,config", "The serve config (YAML); see serve_config.h", cxxopts::value<std::string>())(
+        "scenario", "A scenario to set up the PDM's loads, inputs and configuration", cxxopts::value<std::string>())(
+        "stepped", "Time moves only when an agent says (run, step), not with the wall clock")(
+        "allow-write", "Let agents write firmware memory");
+    addFirmwareOption(options);
+    addEngineOption(options);
+    agent_control::addMcpOption(options, "pdm32_sim");
+}
+
+int runServe(::cli::Context& context) {
+    ServeOptions options;
+    if (context.has("config")) {
+        auto config = load_serve_config(context.stringOr("config", ""));
+        if (!config) {
+            return ::cli::kFailure;
+        }
+        options.config = std::move(*config);
+    }
+    // The command line wins over the file.
+    options.config.scenario = context.stringOr("scenario", options.config.scenario);
+    options.config.firmware = context.stringOr("firmware", options.config.firmware);
+    options.config.engine = context.stringOr("engine", options.config.engine);
+    options.config.stepped = options.config.stepped || context.flag("stepped");
+    options.allow_write = context.flag("allow-write");
+    if (const auto socket = agent_control::mcpSocketPath(context.args(), "pdm32_sim")) {
+        options.control_socket = *socket;
+        agent_control::installLogRing();
+    }
+
+    pub_sub::NodeIdentity identity("pdm32_sim");
+    node_health::HealthReporter health("pdm32_sim");
+    ::cli::installInterruptHandler();
+
+    std::unique_ptr<Server> server;
+    try {
+        server = std::make_unique<Server>(options);
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("{}", e.what());
+        return ::cli::kFailure;
+    }
+
+    server->run(
+        [&]() {
+            const ServeConfig& config = server->options().config;
+            SPDLOG_INFO("[sim] pdm32 on '{}' (tx '{}'), {} time", config.can.rxKey, config.can.txKey,
+                        config.stepped ? "stepped" : "real");
+            health.markReady();
+            if (!options.control_socket.empty()) {
+                agent_control::announceReady(options.control_socket);
+            }
+        },
+        [&]() { health.kick(); });
+    SPDLOG_INFO("[sim] stopping");
+    return ::cli::kOk;
+}
 
 void addRunOptions(cxxopts::Options& options) {
     options.add_options()("scenario", "The scenario (JSON)", cxxopts::value<std::string>());

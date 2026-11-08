@@ -5,6 +5,9 @@
 
 namespace pdm32::cli {
 
+void addServeOptions(cxxopts::Options& options);
+int runServe(::cli::Context& context);
+
 void addRunOptions(cxxopts::Options& options);
 int runRun(::cli::Context& context);
 

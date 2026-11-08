@@ -34,12 +34,14 @@ add_library(pdm32_sim_core STATIC
     top/scenario.cpp
     top/sim_session.cpp
     top/stimulus.cpp
+    top/sim_channel.cpp
     top/symbols.cpp
 )
 # Included as "pdm32/board/pdm32.h".
 target_include_directories(pdm32_sim_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(pdm32_sim_core
     PUBLIC
+        can
         gz60
         hc08
         emu
@@ -51,11 +53,28 @@ target_link_libraries(pdm32_sim_core
         core
 )
 
+# `serve`: the PDM on the bus. A library so the tests can run it in-process.
+add_library(pdm32_sim_server STATIC
+    server.cpp
+    serve_config.cpp
+)
+target_include_directories(pdm32_sim_server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(pdm32_sim_server
+    PUBLIC
+        pdm32_sim_core
+        can_zenoh
+        agent_control_core
+    PRIVATE
+        cli
+        node_config
+        yaml-cpp::yaml-cpp
+)
+
 add_executable(pdm32_sim
     main.cpp
     verbs.cpp
 )
-target_link_libraries(pdm32_sim PRIVATE pdm32_sim_core core cli)
+target_link_libraries(pdm32_sim PRIVATE pdm32_sim_server pdm32_sim_core core cli node_health zenoh_pub_sub)
 
 # ---------------------------------------------------------------------- tests
 
@@ -80,6 +99,22 @@ add_executable(pdm32_test_system
 target_link_libraries(pdm32_test_system PRIVATE pdm32_sim_core mctest)
 target_compile_definitions(pdm32_test_system PRIVATE PDM32_SCENARIO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scenarios")
 add_project_test(TARGET pdm32_test_system LABELS pdm32 slow ENVIRONMENT ${_pdm32_firmware_env})
+
+# The device's CAN port as a can::Channel, and the serve config, without firmware.
+add_executable(pdm32_test_sim_channel
+    tests/test_sim_channel.cpp
+)
+target_link_libraries(pdm32_test_sim_channel PRIVATE pdm32_sim_server mctest)
+add_project_test(TARGET pdm32_test_sim_channel LABELS pdm32 unit)
+
+# serve in-process on a real zenoh session: the data stream at its rate on the
+# rx topic, a tx frame into the PDM, the methods answering from the running
+# simulation. Skips without the firmware image.
+add_executable(pdm32_test_serve tests/test_serve.cpp)
+target_link_libraries(pdm32_test_serve PRIVATE pdm32_sim_server zenoh_pub_sub schemas capnp spdlog::spdlog)
+target_include_directories(pdm32_test_serve PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(pdm32_test_serve PRIVATE PDM32_SCENARIO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scenarios")
+add_project_test(TARGET pdm32_test_serve LABELS pdm32 net slow ENVIRONMENT ${_pdm32_firmware_env})
 
 # Include direction between the layers above.
 find_package(Python3 COMPONENTS Interpreter)

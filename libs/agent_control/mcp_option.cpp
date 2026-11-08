@@ -24,8 +24,8 @@ void addMcpOption(cxxopts::Options& options, std::string_view app)
 {
     options.add_options("optional")(
         "mcp",
-        "Enable the agent control interface on a unix socket, and run headless (forces the Qt "
-        "platform to 'offscreen'). Takes its value with '=', as in --mcp=/tmp/a.sock; bare --mcp "
+        "Enable the agent control interface on a unix socket; a GUI app also runs headless (the Qt "
+        "platform is forced to 'offscreen'). Takes its value with '=', as in --mcp=/tmp/a.sock; bare --mcp "
         "uses /tmp/redline_" + std::string(app) + "_<pid>.sock.",
         cxxopts::value<std::string>()->implicit_value(""));
 }

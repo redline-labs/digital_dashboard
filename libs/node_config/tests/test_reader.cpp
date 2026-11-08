@@ -119,6 +119,22 @@ void testTopicKeys()
     }
 }
 
+void testUnknownKeys()
+{
+    const YAML::Node yaml = YAML::Load("can: {name: can0, rx_kye: x}\nscenario: a.json\n");
+    node_config::Context context;
+    node_config::rejectUnknownKeys(yaml, {"can", "scenario"}, context, "");
+    check(context.ok, "known keys pass");
+
+    node_config::Context bad;
+    node_config::rejectUnknownKeys(yaml["can"], {"name", "rx_key"}, bad, "can");
+    check(!bad.ok, "a misspelt key is refused");
+
+    node_config::Context scalar;
+    node_config::rejectUnknownKeys(yaml["scenario"], {}, scalar, "scenario");
+    check(scalar.ok, "a scalar is not this check's business");
+}
+
 void testFieldPaths()
 {
     check(node_config::fieldPath("", "port") == "port", "a top-level field is just its name");
@@ -135,6 +151,7 @@ int main()
     testNumber();
     testStringAndBool();
     testTopicKeys();
+    testUnknownKeys();
     testFieldPaths();
     std::fprintf(stderr, "%d/%d checks passed\n", g_checks - g_failures, g_checks);
     return g_failures == 0 ? 0 : 1;
