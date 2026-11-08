@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 from mcp.server.mcpserver import Image, MCPServer
 from pydantic import Field
 
+from . import sim_tools
 from .client import AgentError
 from .supervisor import AppName, LaunchError, Supervisor
 
@@ -19,8 +20,9 @@ from .supervisor import AppName, LaunchError, Supervisor
 APP_FIELD = Field(
     default=None,
     description=(
-        "Which app to target: 'dashboard', 'editor', 'scope' or 'switchboard'. Optional "
-        "when only one is running. There is at most one instance of each type."
+        "Which app to target: 'dashboard', 'editor', 'scope', 'switchboard', or 'pdm32_sim' "
+        "(the simulator, for app_logs/app_call/app_methods). Optional when only one app is "
+        "running; a simulator is never the default. There is at most one instance of each type."
     ),
 )
 
@@ -46,6 +48,20 @@ app_call and the switchboard.* methods (app_methods lists them): services,
 select, form, set_fields, reset, submit (returns a call_id), result, history.
 map_server is a supervised NODE: launch it, read it with app_logs, quit it, and
 nothing else -- it is headless and has no control socket.
+
+SIMULATORS stand in for hardware. pdm32_sim runs MoTeC's PDM32 firmware on an
+emulated MCU and puts its CAN on the bus exactly where can_bridge would put a
+real PDM's (vehicle/can0/rx, /tx), so motec_pdm, scope and the dashboard cannot
+tell the difference. It needs the firmware image (PDM_FIRMWARE_HEX, or
+extra_args ["--firmware", path]); a scenario wires its loads and inputs:
+
+    app_launch(app="pdm32_sim",
+               extra_args=["--scenario", "sims/pdm32/scenarios/short_output.json"])
+
+Drive it with the sim_* tools: sim_set_input / sim_set_load / sim_set_battery
+change what is wired to the connector, sim_read / sim_outputs / sim_signals
+read it back, sim_break / sim_watch debug the firmware. It runs in real time;
+add "--stepped" to extra_args for time that moves only on sim_run / sim_step.
 
 Launch a node when what you are looking at depends on it. A map widget with no
 map_server behind it draws its background and says "No reply from map_server",
@@ -1681,3 +1697,8 @@ def app_methods(app: Annotated[AppName | None, APP_FIELD] = None) -> str:
         return json.dumps(_call(app, "rpc.methods"), indent=2)
     except (AgentError, LaunchError, OSError) as exc:
         return _fail(exc)
+
+
+# ------------------------------------------------------------------ simulators
+
+sim_tools.register(mcp, _call, _fail)

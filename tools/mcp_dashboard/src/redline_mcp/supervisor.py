@@ -37,7 +37,9 @@ from typing import Literal
 
 from .client import AgentClient
 
-AppName = Literal["dashboard", "editor", "scope", "switchboard", "map_server", "bd992_mock", "carplay_sim"]
+AppName = Literal[
+    "dashboard", "editor", "scope", "switchboard", "map_server", "bd992_mock", "carplay_sim", "pdm32_sim"
+]
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,11 @@ class AppSpec:
     # Always passed, before extra_args. For a node whose only headless mode is a
     # flag, so that launching it cannot forget the flag.
     default_args: tuple[str, ...] = ()
+
+    # Whether a call with no app= may mean this one. A simulator has a control
+    # socket but is never what "the app" means: a ui_snapshot with no app= while
+    # a dashboard and a simulator both run should still find the dashboard.
+    pickable: bool = True
 
 
 APPS: dict[str, AppSpec] = {
@@ -122,6 +129,19 @@ APPS: dict[str, AppSpec] = {
         # up and the first parameter sets are published.
         ready_marker="[sim] H.264 parameter sets",
         default_args=("--simulate",),
+    ),
+    "pdm32_sim": AppSpec(
+        binaries=("sims/pdm32/pdm32_sim",),
+        # It answers JSON-RPC on --mcp, but with simulator methods (sim_* tools,
+        # app_call), not ui_/input_ ones; it has no widgets.
+        controllable=True,
+        pickable=False,
+        ready_marker="AGENT_READY",
+        # Needs the firmware: PDM_FIRMWARE_HEX in the server's environment, or
+        # extra_args=["--firmware", path]. A scenario sets up loads and inputs:
+        # extra_args=["--scenario", "sims/pdm32/scenarios/short_output.json"].
+        # Add "--stepped" for time that moves only on sim_run / sim_step.
+        default_args=("serve",),
     ),
 }
 
@@ -336,7 +356,9 @@ class Supervisor:
                 # never the answer -- letting map_server into this set would
                 # make every existing no-app call ambiguous the moment one is
                 # running, which is exactly when they are most useful.
-                pickable = {n: i for n, i in live.items() if i.controllable}
+                pickable = {
+                    n: i for n, i in live.items() if i.controllable and spec_for(n).pickable
+                }
                 if not pickable:
                     raise LaunchError("No application is running. Call app_launch first.")
                 if len(pickable) > 1:

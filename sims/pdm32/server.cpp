@@ -1,5 +1,7 @@
 #include "server.h"
 
+#include <unistd.h>
+
 #include <future>
 #include <stdexcept>
 #include <utility>
@@ -77,6 +79,19 @@ Server::Server(ServeOptions options)
     register_methods(dispatcher_, *session_, hooks);
     dispatcher_.registerMethod("app.logs", agent_control::queryLogs, agent_control::MethodKind::kReadOnly,
                                "{since_seq?, level?, grep?, logger?, limit?}: this process's log");
+    dispatcher_.registerMethod(
+        "app.info",
+        [this](const json&) -> agent_control::MethodResult {
+            const ServeConfig& config = options_.config;
+            return json{{"app", "pdm32_sim"},
+                        {"pid", ::getpid()},
+                        {"time", realtime_ ? "real" : "stepped"},
+                        {"rx_key", config.can.rxKey},
+                        {"tx_key", config.can.txKey},
+                        {"scenario", config.scenario},
+                        {"firmware", session_->instance().cfg.firmware_path}};
+        },
+        agent_control::MethodKind::kReadOnly, "what this simulator is running and where its bus goes");
 
     bridge_ = std::make_unique<can_zenoh::BridgedChannel>(options_.config.can, channel_);
     bridge_->start();

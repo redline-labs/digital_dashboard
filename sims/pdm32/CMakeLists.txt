@@ -123,6 +123,17 @@ if(Python3_FOUND)
     set_tests_properties(pdm32_test_layers PROPERTIES LABELS "pdm32;unit")
 endif()
 
+# The sim_* MCP tools against this build's pdm32_sim, through the supervisor
+# (tools/mcp_dashboard/tests). Needs uv; skips without the firmware image.
+find_program(UV_PROGRAM uv)
+if(UV_PROGRAM)
+    add_test(NAME pdm32_test_mcp
+        COMMAND ${UV_PROGRAM} run --with pytest pytest -q tests
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tools/mcp_dashboard)
+    set_tests_properties(pdm32_test_mcp PROPERTIES LABELS "pdm32;slow"
+        ENVIRONMENT "REDLINE_BUILD_DIR=${CMAKE_BINARY_DIR};${_pdm32_firmware_env};PUB_SUB_NO_DISCOVERY=1")
+endif()
+
 # The engines on the real firmware. A measurement, not a test.
 add_executable(pdm32_bench bench/bench_core.cpp)
 target_link_libraries(pdm32_bench PRIVATE pdm32_sim_core core)
