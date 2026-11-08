@@ -52,3 +52,6 @@ include(cpp-httplib.cmake)
 
 # LGPL Compliance: Create source code availability notice
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/../NOTICE DESTINATION ${CMAKE_BINARY_DIR}/licenses)
+# The machine-code emitter behind the HC08 JIT (libs/hc08). Only the plain
+# Assembler for the host is built; libs/hc08 owns the executable memory.
+include(asmjit.cmake)

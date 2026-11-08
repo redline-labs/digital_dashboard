@@ -271,6 +271,9 @@ add_subdirectory(models)
 # tools/ added above it would silently opt out of every warning this tree treats
 # as load-bearing.
 add_subdirectory(tools)
+# Emulators standing in for hardware. Workstation-only like tools/, and under
+# the same warning block for the same reason.
+add_subdirectory(sims)
 
 # Local docs preview (manual): serves the Jekyll site from the docs directory.
 # Usage: cmake --build . --target docs_serve

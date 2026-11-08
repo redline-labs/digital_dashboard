@@ -1,0 +1,26 @@
+{
+  "name": "input1_drives_out1_then_short",
+  "comment": "12 V on input 1 turns output 1 on (6 ohm load, 2.25 A); at t=2 s output 1 is shorted to ground: the switch current-limits and overheats, the output stays below 4 V and the firmware reports the fault (status bit 1) about 200 ms later, on the 0x504 stream too. No retries: latched off with bit 3.",
+  "seconds": 3.0,
+  "battery_v": 13.5,
+  "config": {"builder": "input_to_output", "input": 1, "output": 1, "threshold_v": 6.0, "retries": 0},
+  "loads": [{"output": 1, "load": "6"}],
+  "inputs": [{"input": 1, "volts": 0}],
+  "events": [
+    {"t": 1.0, "set": "in[1].v", "value": 12.0},
+    {"t": 2.0, "set": "out[1].load", "value": "short"}
+  ],
+  "expect": [
+    {"t": 0.9, "read": "g_runMode", "eq": 0, "why": "the configuration and calibration were accepted (normal mode)"},
+    {"t": 0.9, "read": "out[1].pin", "eq": 0, "why": "input low: output off"},
+    {"after": 1.0, "by": 1.1, "read": "out[1].pin", "eq": 1, "why": "input above 6 V: output 1 on within a few 20 ms cycles"},
+    {"t": 1.5, "read": "out[1].i", "gt": 2.0, "why": "the 6 ohm load draws ~2.25 A"},
+    {"t": 1.5, "read": "g_outputStatus[0]", "mask": "0x0F", "eq": 1, "why": "status: on"},
+    {"after": 1.0, "by": 1.5, "read": "can:PDM_Output_Status_1", "eq": 1, "why": "the 0x504 stream reports on"},
+    {"after": 2.0, "by": 2.6, "read": "g_outputStatus[0]", "mask": "0x02", "eq": 2, "why": "short: low-voltage fault"},
+    {"t": 2.15, "read": "g_outputStatus[0]", "mask": "0x02", "eq": 0, "why": "not before the ~200 ms filter"},
+    {"after": 2.0, "by": 2.7, "read": "can:PDM_Output_Status_1", "mask": "0x02", "eq": 2, "why": "the 0x504 stream reports the fault"},
+    {"t": 2.9, "read": "out[1].pin", "eq": 0, "why": "the firmware turned the output off"}
+  ],
+  "trace": {"period_ms": 20, "names": ["in[1].v", "in[1].raw", "out[1].pin", "out[1].v", "out[1].i", "out[1].tj", "out[1].shutdown", "g_outputStatus[0]", "can:PDM_Output_Status_1", "can:PDM_Output_Voltage_1"]}
+}

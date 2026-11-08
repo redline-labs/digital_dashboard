@@ -44,3 +44,9 @@ __pycache__/
 # exact drift the layout fingerprint exists to catch.
 web/redline.js
 web/redline.wasm
+
+# Vendor firmware images and what is read back from a unit stay out of the tree:
+# the simulators under sims/ load them from outside it.
+*.hex
+*.s19
+dumps/

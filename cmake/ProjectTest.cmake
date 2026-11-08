@@ -35,6 +35,9 @@
 #     add_project_test(TARGET map_test_widget NAME map_test_widget_hidpi
 #                      LABELS dashboard map gui ENVIRONMENT QT_SCALE_FACTOR=2)
 #
+# ARGS are passed to the program. WILL_FAIL inverts the result, for the test that
+# proves a checker can fail at all.
+#
 # NAME defaults to TARGET, and must be given when registering a target twice --
 # ctest test names are unique. ENVIRONMENT entries are APPENDED to the ones this
 # function sets, never replacing them.
@@ -51,7 +54,7 @@
 #     }
 
 function(add_project_test)
-    cmake_parse_arguments(PT "" "TARGET;NAME;TIMEOUT" "LABELS;ENVIRONMENT" ${ARGN})
+    cmake_parse_arguments(PT "WILL_FAIL" "TARGET;NAME;TIMEOUT" "LABELS;ENVIRONMENT;ARGS" ${ARGN})
 
     if(NOT PT_TARGET)
         message(FATAL_ERROR "add_project_test: TARGET is required")
@@ -103,8 +106,14 @@ function(add_project_test)
         return()
     endif()
 
-    add_test(NAME ${PT_NAME} COMMAND ${PT_TARGET})
+    add_test(NAME ${PT_NAME} COMMAND ${PT_TARGET} ${PT_ARGS})
     set_tests_properties(${PT_NAME} PROPERTIES LABELS "${PT_LABELS}")
+
+    # A test that proves a checker can fail: it passes only when the program
+    # reports failure. Pair it with the same checker run for real.
+    if(PT_WILL_FAIL)
+        set_tests_properties(${PT_NAME} PROPERTIES WILL_FAIL TRUE)
+    endif()
 
     # Default is generous: these are correctness tests, not benchmarks, and a
     # hang should be reported as a hang rather than by wedging the whole run.

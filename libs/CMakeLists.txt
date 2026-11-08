@@ -50,6 +50,13 @@ add_subdirectory(can_trc)
 # and pub_sub; before can_backends, which offers zenoh: behind a flag.
 add_subdirectory(can_zenoh)
 add_subdirectory(can_backends)
+# Emulation: the wiring every emulator shares, the CPU08 core, and the GZ60
+# around it. After `can`: the GZ60's MSCAN carries helpers::CanFrame. mctest
+# is the TEST()/CHECK() harness their tests are written in.
+add_subdirectory(mctest)
+add_subdirectory(emu)
+add_subdirectory(hc08)
+add_subdirectory(gz60)
 # The Trimble GSOF protocol: framing, records, command building. Pure bytes,
 # no I/O -- `bd992` sits above it with the sockets. Independent of everything
 # above, so its position here is only about keeping the hardware libraries

@@ -1,0 +1,2821 @@
+{
+ "image": "pdm_v191 (PDM V1.91U Oct 31 2022)",
+ "symbols": [
+  {
+   "name": "PTA",
+   "address": 0,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PTB",
+   "address": 1,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PTC",
+   "address": 2,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PTD",
+   "address": 3,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "DDRA",
+   "address": 4,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "DDRB",
+   "address": 5,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "DDRC",
+   "address": 6,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "DDRD",
+   "address": 7,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PTE",
+   "address": 8,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCPSC",
+   "address": 9,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCIACTL",
+   "address": 10,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCIADAT",
+   "address": 11,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "DDRE",
+   "address": 12,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PTAPUE",
+   "address": 13,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PTCPUE",
+   "address": 14,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PTDPUE",
+   "address": 15,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SPCR",
+   "address": 16,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SPSCR",
+   "address": 17,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SPDR",
+   "address": 18,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCC1",
+   "address": 19,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCC2",
+   "address": 20,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCC3",
+   "address": 21,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCS1",
+   "address": 22,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCS2",
+   "address": 23,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCDR",
+   "address": 24,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "SCBR",
+   "address": 25,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "INTKBSCR",
+   "address": 26,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "INTKBIER",
+   "address": 27,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "TBCR",
+   "address": 28,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "INTSCR",
+   "address": 29,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CONFIG2",
+   "address": 30,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CONFIG1",
+   "address": 31,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1SC",
+   "address": 32,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1CNTH",
+   "address": 33,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1CNTL",
+   "address": 34,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1MODH",
+   "address": 35,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1MODL",
+   "address": 36,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1SC0",
+   "address": 37,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1CH0H",
+   "address": 38,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1CH0L",
+   "address": 39,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1SC1",
+   "address": 40,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1CH1H",
+   "address": 41,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T1CH1L",
+   "address": 42,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2SC",
+   "address": 43,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2CNTH",
+   "address": 44,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2CNTL",
+   "address": 45,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2MODH",
+   "address": 46,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2MODL",
+   "address": 47,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2SC0",
+   "address": 48,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2CH0H",
+   "address": 49,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2CH0L",
+   "address": 50,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2SC1",
+   "address": 51,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2CH1H",
+   "address": 52,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "T2CH1L",
+   "address": 53,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PCTL",
+   "address": 54,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PBWC",
+   "address": 55,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PMSH",
+   "address": 56,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PMSL",
+   "address": 57,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "PMRS",
+   "address": 58,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "ADSCR",
+   "address": 60,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "ADRH",
+   "address": 61,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "ADRL",
+   "address": 62,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "ADCLK",
+   "address": 63,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "g_pChannelTable",
+   "address": 64,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_logicDebounceLimitHi",
+   "address": 66,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_logicDebounceLimitLo",
+   "address": 67,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_pLogicScratch",
+   "address": 68,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pLogicDebounce",
+   "address": 70,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_logicSysFlagsSnapshot",
+   "address": 72,
+   "kind": "data",
+   "size": 3
+  },
+  {
+   "name": "g_compiledTxData",
+   "address": 75,
+   "kind": "data",
+   "size": 8
+  },
+  {
+   "name": "g_tickDiv10ms",
+   "address": 83,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_tickDiv20ms",
+   "address": 84,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_tickDiv100ms",
+   "address": 85,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_tempFilterAcc",
+   "address": 86,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_dataStreamSlot",
+   "address": 88,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_userTxScratch",
+   "address": 89,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_userTxStatusDiv",
+   "address": 90,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "g_thermCurrent",
+   "address": 123,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_thermScaled",
+   "address": 124,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_thermScale",
+   "address": 126,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_thermTmp",
+   "address": 128,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_outputTestCycles",
+   "address": 132,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_faultResetPrev",
+   "address": 133,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_beaconTimer",
+   "address": 134,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_unlockKeyArg",
+   "address": 136,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_unlockCmd",
+   "address": 140,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_unlockResult",
+   "address": 141,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_unlockFlagsReport",
+   "address": 142,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_unlockFailMask",
+   "address": 143,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_unlockKeysPending",
+   "address": 144,
+   "kind": "data",
+   "size": 8
+  },
+  {
+   "name": "g_unlockWriteCount",
+   "address": 152,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_unlockMarker",
+   "address": 153,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_derivedUnlockKeys",
+   "address": 155,
+   "kind": "data",
+   "size": 8
+  },
+  {
+   "name": "g_tempLastSample",
+   "address": 163,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_tempFilteredIdx",
+   "address": 164,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_sleepCountdown",
+   "address": 166,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_adcCalTmp",
+   "address": 168,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pAdcOutputStatus",
+   "address": 170,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pAdcCurrentCal",
+   "address": 172,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pAdcScanEntry",
+   "address": 174,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_adcEntryFlags",
+   "address": 176,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_adcEntryAdscr",
+   "address": 177,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_pAdcDest",
+   "address": 178,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_canRxTmp",
+   "address": 180,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_canDevRxTimeout",
+   "address": 184,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_canRxTimeout",
+   "address": 188,
+   "kind": "data",
+   "size": 8
+  },
+  {
+   "name": "g_canDevTxFlags",
+   "address": 196,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_pLogicCode",
+   "address": 200,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_logicExpected",
+   "address": 202,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_logicChangedFlags",
+   "address": 203,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_logicResult",
+   "address": 204,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_pLogicDebounceEntry",
+   "address": 205,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_logicIndex",
+   "address": 207,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_outputShedActive",
+   "address": 208,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_outputTestMask",
+   "address": 209,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_outCfgFlags",
+   "address": 213,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_outIndex",
+   "address": 214,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_pOutput9Interlock",
+   "address": 215,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutPinMap",
+   "address": 217,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutRuntime",
+   "address": 219,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutConfig",
+   "address": 221,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutThermal",
+   "address": 223,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutLoad",
+   "address": 225,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutStatus",
+   "address": 227,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutCurrent",
+   "address": 229,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_pOutVoltage",
+   "address": 231,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_shadowPTF",
+   "address": 233,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_shadowPTE",
+   "address": 234,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_shadowPTD",
+   "address": 235,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_shadowPTC",
+   "address": 236,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_shadowPTA",
+   "address": 237,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsTxTimeout",
+   "address": 238,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_flashEndPtr",
+   "address": 239,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_flashPtr",
+   "address": 241,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_rtLongAcc",
+   "address": 243,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_rtScratch",
+   "address": 247,
+   "kind": "data",
+   "size": 9
+  },
+  {
+   "name": "g_flag10ms",
+   "address": 256,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_flag20ms",
+   "address": 257,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_flag100ms",
+   "address": 258,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_serialNumberHi",
+   "address": 259,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_serialNumberLo",
+   "address": 260,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_appRunMagic",
+   "address": 262,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_errorCode",
+   "address": 264,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_errorCodeCopy",
+   "address": 266,
+   "kind": "data",
+   "size": 8
+  },
+  {
+   "name": "g_testCommand",
+   "address": 274,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_channelTable",
+   "address": 276,
+   "kind": "data",
+   "size": 8
+  },
+  {
+   "name": "g_batteryVoltageRaw",
+   "address": 278,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_rail9V5Raw",
+   "address": 279,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_boardTemperature",
+   "address": 280,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_globalErrorFlag",
+   "address": 281,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_totalCurrent",
+   "address": 282,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_canTimeoutFlags",
+   "address": 283,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_logicChannelState",
+   "address": 284,
+   "kind": "data",
+   "size": 200
+  },
+  {
+   "name": "g_inputVoltage",
+   "address": 484,
+   "kind": "data",
+   "size": 23
+  },
+  {
+   "name": "g_outputVoltage",
+   "address": 507,
+   "kind": "data",
+   "size": 32
+  },
+  {
+   "name": "g_outputCurrent",
+   "address": 539,
+   "kind": "data",
+   "size": 32
+  },
+  {
+   "name": "g_outputLoad",
+   "address": 571,
+   "kind": "data",
+   "size": 32
+  },
+  {
+   "name": "g_canRxData",
+   "address": 603,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "g_outputStatus",
+   "address": 659,
+   "kind": "data",
+   "size": 32
+  },
+  {
+   "name": "g_canDevRxData",
+   "address": 691,
+   "kind": "data",
+   "size": 12
+  },
+  {
+   "name": "g_canDevRxValidMask",
+   "address": 703,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_sleepCurrentMonitorEnabled",
+   "address": 705,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_canTxEnabled",
+   "address": 706,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsRegionTable",
+   "address": 707,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "g_hardwareRevision",
+   "address": 734,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_streamStatusByte7",
+   "address": 735,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_userTxSeqBusy",
+   "address": 736,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_dataStreamDiv",
+   "address": 737,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_userTxDiv",
+   "address": 738,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_dataStreamRateCount",
+   "address": 739,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_testStepDelay",
+   "address": 740,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_output9HoldTimer",
+   "address": 741,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_output9WasOn",
+   "address": 742,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_canActivityFlag",
+   "address": 744,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsRxRemaining",
+   "address": 745,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_pCommsRxBuf",
+   "address": 746,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_commsSeq",
+   "address": 748,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsRequestPending",
+   "address": 749,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsBusy",
+   "address": 750,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsTxPending",
+   "address": 751,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsReadRemaining",
+   "address": 752,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsTxState",
+   "address": 753,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_beaconRequested",
+   "address": 754,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_beaconEnabled",
+   "address": 755,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_pMscanFilterTable",
+   "address": 756,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_beaconCounter",
+   "address": 758,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_unlockStoreBank",
+   "address": 759,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_featureUnlockFlags",
+   "address": 760,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_serialProgrammed",
+   "address": 761,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_runMode",
+   "address": 762,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_numInputs",
+   "address": 763,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_numOutputs",
+   "address": 764,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_modelSubType",
+   "address": 765,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_modelType",
+   "address": 766,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_resetStatus",
+   "address": 767,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_pAdcScanTable",
+   "address": 768,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_adcDiscard",
+   "address": 770,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_boardTempRaw",
+   "address": 771,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_dataStreamRequest",
+   "address": 772,
+   "kind": "data",
+   "size": 6
+  },
+  {
+   "name": "g_userTxPendingA",
+   "address": 778,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_userTxPendingB",
+   "address": 779,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_userTxTimers",
+   "address": 780,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_testAdcSum",
+   "address": 784,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_totalCurrentHi",
+   "address": 786,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_outputRuntime",
+   "address": 788,
+   "kind": "data",
+   "size": 128
+  },
+  {
+   "name": "g_commsSessionTimeout",
+   "address": 916,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsSessionReload",
+   "address": 917,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsFilterLo",
+   "address": 918,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsRxIdFilter",
+   "address": 919,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsTxNode",
+   "address": 920,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsRxNode",
+   "address": 921,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsReadState",
+   "address": 922,
+   "kind": "data",
+   "size": 7
+  },
+  {
+   "name": "g_commsRxLen",
+   "address": 929,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsRequest",
+   "address": 930,
+   "kind": "data",
+   "size": 8
+  },
+  {
+   "name": "g_commsRequestType",
+   "address": 938,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_commsWriteData",
+   "address": 939,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "g_commsRegionCount",
+   "address": 1067,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "fact_Header",
+   "address": 1122,
+   "kind": "factory",
+   "size": 2
+  },
+  {
+   "name": "fact_SerialBinary",
+   "address": 1124,
+   "kind": "factory",
+   "size": 3
+  },
+  {
+   "name": "fact_ModelType",
+   "address": 1127,
+   "kind": "factory",
+   "size": 2
+  },
+  {
+   "name": "fact_ModelSubType",
+   "address": 1129,
+   "kind": "factory",
+   "size": 1
+  },
+  {
+   "name": "fact_HwRevGate",
+   "address": 1130,
+   "kind": "factory",
+   "size": 4
+  },
+  {
+   "name": "fact_InfoMarkerP",
+   "address": 1134,
+   "kind": "factory",
+   "size": 4
+  },
+  {
+   "name": "fact_ModelChar",
+   "address": 1138,
+   "kind": "factory",
+   "size": 1
+  },
+  {
+   "name": "fact_InfoVersion",
+   "address": 1139,
+   "kind": "factory",
+   "size": 7
+  },
+  {
+   "name": "fact_SerialAscii",
+   "address": 1146,
+   "kind": "factory",
+   "size": 6
+  },
+  {
+   "name": "fact_UnlockKeysBankA",
+   "address": 1152,
+   "kind": "factory",
+   "size": 8
+  },
+  {
+   "name": "fact_UnlockBankASeq",
+   "address": 1160,
+   "kind": "factory",
+   "size": 16
+  },
+  {
+   "name": "CMCR0",
+   "address": 1280,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CMCR1",
+   "address": 1281,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CBTR0",
+   "address": 1282,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CBTR1",
+   "address": 1283,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CRFLG",
+   "address": 1284,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CRIER",
+   "address": 1285,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CTFLG",
+   "address": 1286,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CTCR",
+   "address": 1287,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDAC",
+   "address": 1288,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CRXERR",
+   "address": 1294,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CTXERR",
+   "address": 1295,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDAR0",
+   "address": 1296,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDAR1",
+   "address": 1297,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDAR2",
+   "address": 1298,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDAR3",
+   "address": 1299,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDMR0",
+   "address": 1300,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDMR1",
+   "address": 1301,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDMR2",
+   "address": 1302,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CIDMR3",
+   "address": 1303,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_RXB_IDR0",
+   "address": 1344,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_RXB_IDR1",
+   "address": 1345,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_RXB_IDR2",
+   "address": 1346,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_RXB_IDR3",
+   "address": 1347,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_RXB_DSR0",
+   "address": 1348,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_RXB_DLR",
+   "address": 1356,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB0_IDR0",
+   "address": 1360,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB0_IDR1",
+   "address": 1361,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB0_IDR2",
+   "address": 1362,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB0_IDR3",
+   "address": 1363,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB0_DSR0",
+   "address": 1364,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB0_DLR",
+   "address": 1372,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB0_TBPR",
+   "address": 1373,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB1_IDR0",
+   "address": 1376,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB1_IDR1",
+   "address": 1377,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB1_IDR2",
+   "address": 1378,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB1_IDR3",
+   "address": 1379,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB1_DSR0",
+   "address": 1380,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB1_DLR",
+   "address": 1388,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB1_TBPR",
+   "address": 1389,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB2_IDR0",
+   "address": 1392,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB2_IDR1",
+   "address": 1393,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB2_IDR2",
+   "address": 1394,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB2_IDR3",
+   "address": 1395,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB2_DSR0",
+   "address": 1396,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB2_DLR",
+   "address": 1404,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "CAN_TXB2_TBPR",
+   "address": 1405,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "g_userTxSeqIndex",
+   "address": 1408,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_testResult",
+   "address": 1409,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_testSubStep",
+   "address": 1410,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_testStep",
+   "address": 1411,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_testResults",
+   "address": 1412,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "g_logicDebounce",
+   "address": 1435,
+   "kind": "data",
+   "size": 400
+  },
+  {
+   "name": "g_logicScratch",
+   "address": 1835,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "g_outputThermal",
+   "address": 2035,
+   "kind": "data",
+   "size": 192
+  },
+  {
+   "name": "g_outputTestMagic",
+   "address": 2227,
+   "kind": "data",
+   "size": 2
+  },
+  {
+   "name": "g_outputTestPattern",
+   "address": 2229,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_outputFaultBits",
+   "address": 2233,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "g_output9Pulse",
+   "address": 2237,
+   "kind": "data",
+   "size": 1
+  },
+  {
+   "name": "g_output9InterlockEnabled",
+   "address": 2238,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "cfg_Header",
+   "address": 7712,
+   "kind": "config",
+   "size": 4
+  },
+  {
+   "name": "cfg_CanRxDefs",
+   "address": 7716,
+   "kind": "config",
+   "size": 16
+  },
+  {
+   "name": "cfg_CanRxTimeouts",
+   "address": 7744,
+   "kind": "config",
+   "size": 7
+  },
+  {
+   "name": "cfg_CanRxTimeoutEnableMask",
+   "address": 7751,
+   "kind": "config",
+   "size": 1
+  },
+  {
+   "name": "cfg_UserTxMsg0",
+   "address": 7752,
+   "kind": "config",
+   "size": 16
+  },
+  {
+   "name": "cfg_UserTxMsg1",
+   "address": 7797,
+   "kind": "config",
+   "size": 16
+  },
+  {
+   "name": "cfg_UserTxMsg2",
+   "address": 7842,
+   "kind": "config",
+   "size": 16
+  },
+  {
+   "name": "cfg_UserTxMsg3",
+   "address": 7887,
+   "kind": "config",
+   "size": 16
+  },
+  {
+   "name": "cfg_DataStreamIdrs",
+   "address": 7932,
+   "kind": "config",
+   "size": 4
+  },
+  {
+   "name": "cfg_StreamIdr_0x501_Current",
+   "address": 7936,
+   "kind": "config",
+   "size": 4
+  },
+  {
+   "name": "cfg_StreamIdr_0x502_Load",
+   "address": 7940,
+   "kind": "config",
+   "size": 4
+  },
+  {
+   "name": "cfg_StreamIdr_0x503_OutVoltage",
+   "address": 7944,
+   "kind": "config",
+   "size": 4
+  },
+  {
+   "name": "cfg_StreamIdr_0x504_Status",
+   "address": 7948,
+   "kind": "config",
+   "size": 4
+  },
+  {
+   "name": "cfg_StreamIdr_0x505_InVoltage",
+   "address": 7952,
+   "kind": "config",
+   "size": 4
+  },
+  {
+   "name": "cfg_DataStreamRate",
+   "address": 7956,
+   "kind": "config",
+   "size": 1
+  },
+  {
+   "name": "cfg_DataStreamEnableMask",
+   "address": 7957,
+   "kind": "config",
+   "size": 1
+  },
+  {
+   "name": "cfg_OutputConfig",
+   "address": 7958,
+   "kind": "config",
+   "size": 416
+  },
+  {
+   "name": "cfg_LogicCodeLengths",
+   "address": 8374,
+   "kind": "config",
+   "size": 200
+  },
+  {
+   "name": "cfg_LogicInvertMask",
+   "address": 8574,
+   "kind": "config",
+   "size": 200
+  },
+  {
+   "name": "cfg_LogicChannelCount",
+   "address": 8774,
+   "kind": "config",
+   "size": 1
+  },
+  {
+   "name": "cfg_InputStateChannels",
+   "address": 8775,
+   "kind": "config",
+   "size": 23
+  },
+  {
+   "name": "cfg_FaultResetChannel",
+   "address": 8800,
+   "kind": "config",
+   "size": 3
+  },
+  {
+   "name": "cfg_OutputShedChannel",
+   "address": 8803,
+   "kind": "config",
+   "size": 3
+  },
+  {
+   "name": "cfg_Output9Interlock",
+   "address": 8806,
+   "kind": "config",
+   "size": 1
+  },
+  {
+   "name": "cfg_CanDevices",
+   "address": 8807,
+   "kind": "config",
+   "size": 16
+  },
+  {
+   "name": "cfg_CanTxEnableChannel",
+   "address": 8891,
+   "kind": "config",
+   "size": 3
+  },
+  {
+   "name": "cfg_SkipModelCheck",
+   "address": 8894,
+   "kind": "config",
+   "size": 1
+  },
+  {
+   "name": "cfg_CompiledLogicCode",
+   "address": 8895,
+   "kind": "config",
+   "size": 16
+  },
+  {
+   "name": "cal_UnlockKeysBankB",
+   "address": 31360,
+   "kind": "cal",
+   "size": 8
+  },
+  {
+   "name": "cal_UnlockBankBSeq",
+   "address": 31368,
+   "kind": "cal",
+   "size": 16
+  },
+  {
+   "name": "cal_CurrentCalHeader",
+   "address": 31488,
+   "kind": "cal",
+   "size": 4
+  },
+  {
+   "name": "cal_OutputCurrentCal",
+   "address": 31492,
+   "kind": "cal",
+   "size": 1152
+  },
+  {
+   "name": "app_ImageHeader",
+   "address": 32768,
+   "kind": "data",
+   "size": 6
+  },
+  {
+   "name": "app_EntryJump",
+   "address": 32774,
+   "kind": "data",
+   "size": 12
+  },
+  {
+   "name": "ValidateCurrentCalBlock",
+   "address": 32786,
+   "size": 77,
+   "kind": "function",
+   "comment": "Current calibration at $7B00: [0]=0, [1]=1 (version), [2..3]=length, CRC16 stored in the last 2 bytes; returns 1 if valid."
+  },
+  {
+   "name": "MainLoop",
+   "address": 32863,
+   "size": 816,
+   "kind": "function",
+   "comment": "Application main (called from Startup): factory/model detection, init, block validation, then the 1/20/100 ms scheduler loop."
+  },
+  {
+   "name": "IsrMscanWakeup",
+   "address": 33679,
+   "size": 6,
+   "kind": "function",
+   "comment": "Vector $FFDA; clears WUPIF (CRFLG=$80) to wake the CPU from STOP in sleep mode."
+  },
+  {
+   "name": "IsrTimebase",
+   "address": 33685,
+   "size": 3,
+   "kind": "function",
+   "comment": "Vector $FFDC; acks TBIF (TBCR bit3 TACK), periodic STOP wakeup while sleeping."
+  },
+  {
+   "name": "InitTim1Tick1ms",
+   "address": 33688,
+   "size": 13,
+   "kind": "function",
+   "comment": "T1SC=$30 (stop+reset), T1MOD=$1F40, T1SC=$40 (TOIE, /1): 1 kHz overflow at an 8 MHz bus."
+  },
+  {
+   "name": "StopTim1",
+   "address": 33701,
+   "size": 4,
+   "kind": "function",
+   "comment": "T1SC=$30 before entering sleep."
+  },
+  {
+   "name": "RestartTim1TickDividers",
+   "address": 33705,
+   "size": 13,
+   "kind": "function",
+   "comment": "After wake: reset the 10/20/100 ms dividers (6/6/16) and restart TIM1 (T1SC=$40)."
+  },
+  {
+   "name": "IsrTim1Overflow1msTick",
+   "address": 33718,
+   "size": 93,
+   "kind": "function",
+   "comment": "Vector $FFF2 (TIM1 overflow), 1 ms master tick: comms timers, CAN TX scheduling, 10/20/100 ms flags, ADC scan at phase 4 of 20 ms."
+  },
+  {
+   "name": "ValidateConfigBlock",
+   "address": 33811,
+   "size": 85,
+   "kind": "function",
+   "comment": "User config at $1E20: [0]=0, [1]=9 (format 9), [2..3]=length, CRC16 in the last 2 bytes; returns 0 if OK else error code (4 CRC, 3 header)."
+  },
+  {
+   "name": "EnterErrorMode",
+   "address": 33896,
+   "size": 32,
+   "kind": "function",
+   "comment": "EnterErrorMode(code in X:A): all outputs off, store g_errorCode, g_runMode=1."
+  },
+  {
+   "name": "FilterBoardTemperature",
+   "address": 33928,
+   "size": 68,
+   "kind": "function",
+   "comment": "IIR filter (acc += raw - acc/16) on g_boardTempRaw; g_boardTemperature = tbl_BoardTempLookup[filtered]."
+  },
+  {
+   "name": "ReadHardwareRevision",
+   "address": 33996,
+   "size": 34,
+   "kind": "function",
+   "comment": "g_hardwareRevision = boot_HardwareRevision ($FD80) if factory word $046A:$046B >= $00D2 and value <= 3, else 0."
+  },
+  {
+   "name": "CheckSleepCurrentMonitorEnabled",
+   "address": 34030,
+   "size": 37,
+   "kind": "function",
+   "comment": "g_sleepCurrentMonitorEnabled = any output config with flags (+12) bit0 set."
+  },
+  {
+   "name": "SelectAdcScanTable",
+   "address": 34067,
+   "size": 57,
+   "kind": "function",
+   "comment": "Picks the 90-entry ADC scan table for g_modelType and sets ADCLK=$70."
+  },
+  {
+   "name": "StartAdcScan",
+   "address": 34124,
+   "size": 55,
+   "kind": "function",
+   "comment": "StartAdcScan(A=0 full scan | A!=0 skip the first 3 entries): DDRB=$13 (mux address lines), first conversion discarded."
+  },
+  {
+   "name": "IsrAdcConversionComplete",
+   "address": 34179,
+   "size": 145,
+   "kind": "function",
+   "comment": "Vector $FFDE; stores ADRL per scan-table entry (current entries calibrated), then loads the next entry's PTB mux and ADSCR."
+  },
+  {
+   "name": "IsAdcScanRunning",
+   "address": 34324,
+   "size": 9,
+   "kind": "function",
+   "comment": "Returns DDRB!=0 (the scan drives the mux lines while active)."
+  },
+  {
+   "name": "StartSingleAdcConversion",
+   "address": 34333,
+   "size": 55,
+   "kind": "function",
+   "comment": "Factory-test helper: sets PTB mux and ADSCR from a scan-table entry, continuous, no interrupt."
+  },
+  {
+   "name": "InitCanReceiveTimeouts",
+   "address": 34388,
+   "size": 85,
+   "kind": "function",
+   "comment": "g_canTimeoutFlags = cfg_CanRxTimeoutEnableMask, loads the 7 RX timeouts, sets MSCAN filters, marks CAN devices invalid."
+  },
+  {
+   "name": "TickCanReceiveTimeouts100ms",
+   "address": 34473,
+   "size": 264,
+   "kind": "function",
+   "comment": "7 user CAN receive timeouts and 4 CAN-device timeouts, 100 ms tick -> g_canTimeoutFlags / g_canDevRxValidMask."
+  },
+  {
+   "name": "ParseUserCanReceiveFrame",
+   "address": 34737,
+   "size": 1090,
+   "kind": "function",
+   "comment": "Matches non-comms frames against the 7 user RX definitions (cfg_CanRxDefs) and the 4 CAN devices; copies data to g_canRxData / g_canDevRxData."
+  },
+  {
+   "name": "InitCanTxBuffer0",
+   "address": 35827,
+   "size": 10,
+   "kind": "function",
+   "comment": "TXB0 DLC=8, priority 0."
+  },
+  {
+   "name": "BuildCanDeviceStateFrame",
+   "address": 35837,
+   "size": 110,
+   "kind": "function",
+   "comment": "TXB1 frame to a CAN device with 2 data bytes selected by a channel/mask."
+  },
+  {
+   "name": "BuildCanDeviceInitFrame",
+   "address": 35947,
+   "size": 81,
+   "kind": "function",
+   "comment": "TXB1, ID 0: data {1, cfg[dev]+1, 0...}; device address/initialisation broadcast."
+  },
+  {
+   "name": "BuildCanDeviceCompiledFrame",
+   "address": 36028,
+   "size": 226,
+   "kind": "function",
+   "comment": "TXB1 frame filled by a compiled config routine into g_compiledTxData; sent only on change or refresh."
+  },
+  {
+   "name": "ScheduleCanTransmit1ms",
+   "address": 36254,
+   "size": 254,
+   "kind": "function",
+   "comment": "From the 1 ms ISR: data-stream slot scheduling on TXB0 and user TX message timers."
+  },
+  {
+   "name": "SendDataStreamFrameTxb0",
+   "address": 36508,
+   "size": 2242,
+   "kind": "function",
+   "comment": "MoTeC 'PDM Generic Output' CAN stream frame (IDs 0x500-0x505 by default) for g_dataStreamSlot 0..49."
+  },
+  {
+   "name": "SendUserCanFramesTxb1",
+   "address": 38750,
+   "size": 1985,
+   "kind": "function",
+   "comment": "10-state TXB1 sequence: the 4 user transmit messages and the CAN-device frames."
+  },
+  {
+   "name": "InitCanTxBuffer1Timers",
+   "address": 40735,
+   "size": 38,
+   "kind": "function",
+   "comment": "TXB1 DLC=8, priority 0; g_canDevTxFlags[0..3]=1; user TX timers=1."
+  },
+  {
+   "name": "KickCanTxBuffer1Sequence",
+   "address": 40773,
+   "size": 15,
+   "kind": "function",
+   "comment": "Every 20 ms: if the TXB1 sequence is idle, start it at index 1."
+  },
+  {
+   "name": "RunFactoryTestStateMachine",
+   "address": 40788,
+   "size": 138,
+   "kind": "function",
+   "comment": "Production end-of-line test (g_runMode 2) driven by g_testCommand and tbl_TestStepHandlers."
+  },
+  {
+   "name": "TestStep00Start",
+   "address": 40926,
+   "size": 55,
+   "kind": "function",
+   "comment": "Waits for test command $2222, clears outputs, starts the ADC scan, then step 1."
+  },
+  {
+   "name": "TestStep01CheckBatteryVoltage",
+   "address": 40981,
+   "size": 91,
+   "kind": "function",
+   "comment": "Pass if g_batteryVoltageRaw is in $3B..$40; else fail 2 (low) / 3 (high)."
+  },
+  {
+   "name": "TestStep02CheckChannel3Load",
+   "address": 41072,
+   "size": 205,
+   "kind": "function",
+   "comment": "Checks the PTD0 line via scan entry 3 with output 2 on (>= 200 counts delta)."
+  },
+  {
+   "name": "TestStep03",
+   "address": 41277,
+   "size": 142,
+   "kind": "function",
+   "comment": "Per-output test loop over g_numOutputs using the full ADC scan."
+  },
+  {
+   "name": "TestStep04",
+   "address": 41419,
+   "size": 340,
+   "kind": "function",
+   "comment": "Per-output on/off test with ADC (V/I sense) checks."
+  },
+  {
+   "name": "TestStep05CheckPta1Feedback",
+   "address": 41759,
+   "size": 115,
+   "kind": "function",
+   "comment": "Samples input 1 with PTA1 clear/set (skipped on PDM32 subtype 0)."
+  },
+  {
+   "name": "TestStep09",
+   "address": 41874,
+   "size": 136,
+   "kind": "function",
+   "comment": "Single-channel ADC check gated by g_modelSubType."
+  },
+  {
+   "name": "TestStep06",
+   "address": 42010,
+   "size": 106,
+   "kind": "function",
+   "comment": "Per-input test loop over g_numInputs (full scan)."
+  },
+  {
+   "name": "TestStep07",
+   "address": 42116,
+   "size": 275,
+   "kind": "function",
+   "comment": "Per-input test with outputs driven (input pull-up/down response)."
+  },
+  {
+   "name": "TestStep08",
+   "address": 42391,
+   "size": 216,
+   "kind": "function",
+   "comment": "Input test using single conversions + delays (COP fed)."
+  },
+  {
+   "name": "TestStep10Idle",
+   "address": 42607,
+   "size": 24,
+   "kind": "function",
+   "comment": "End of the test sequence; command $1111 restarts it."
+  },
+  {
+   "name": "InitLogicEnginePointers",
+   "address": 42631,
+   "size": 16,
+   "kind": "function",
+   "comment": "Zero-page ABI for compiled logic: $0040=&g_channelTable, $0044=&g_logicScratch, $0046=&g_logicDebounce."
+  },
+  {
+   "name": "EvaluateCompiledLogicChannels",
+   "address": 42647,
+   "size": 147,
+   "kind": "function",
+   "comment": "The PDM conditions/functions engine: calls compiled HC08 routines from $22BF for up to 200 logic channels with debounce."
+  },
+  {
+   "name": "InitOutputPorts",
+   "address": 42794,
+   "size": 137,
+   "kind": "function",
+   "comment": "Clears g_outputRuntime, drives all output pins low, sets port directions, stops TIM2, sets up the output-9 interlock pointer."
+  },
+  {
+   "name": "SumOutputCurrents",
+   "address": 42931,
+   "size": 235,
+   "kind": "function",
+   "comment": "g_totalCurrent = sum(I[0..7])/2 + sum(I[8..31])/5 (amps, saturating at $FF)."
+  },
+  {
+   "name": "UpdateOutputThermalModel",
+   "address": 43166,
+   "size": 254,
+   "kind": "function",
+   "comment": "Every 100 ms per output: I^2t accumulator, level, and g_outputLoad lookup; level >= 256 is the overcurrent trip."
+  },
+  {
+   "name": "UpdateOutputStateMachines",
+   "address": 43420,
+   "size": 825,
+   "kind": "function",
+   "comment": "Every 20 ms: per-output state machine (OFF/ON/fault/retry/latched), status bytes, pin shadows, output-9 special handling."
+  },
+  {
+   "name": "IsrTim2Overflow",
+   "address": 44245,
+   "size": 15,
+   "kind": "function",
+   "comment": "Vector $FFEC; one-shot: stops TIM2, sets g_output9Pulse and PTA1."
+  },
+  {
+   "name": "CheckMonitoredOutputsDrawingCurrent",
+   "address": 44260,
+   "size": 57,
+   "kind": "function",
+   "comment": "While sleeping: returns 1 if any output with cfg+12 bit0 draws > 2 counts."
+  },
+  {
+   "name": "SetOutputPinDirect",
+   "address": 44317,
+   "size": 59,
+   "kind": "function",
+   "comment": "SetOutputPinDirect(A=on/off, X=output idx): sets the output's port bit directly (factory test only)."
+  },
+  {
+   "name": "ClearAllOutputPins",
+   "address": 44376,
+   "size": 27,
+   "kind": "function",
+   "comment": "Zeroes the port shadows and PTA/PTC/PTD/PTE/PTF."
+  },
+  {
+   "name": "InitPllClock",
+   "address": 44403,
+   "size": 42,
+   "kind": "function",
+   "comment": "InitPllClock(A=0 full speed | !=0 half): reprogram the PLL (N=8 -> 8 MHz bus from 4 MHz crystal) after STOP."
+  },
+  {
+   "name": "DelayLoop16",
+   "address": 44445,
+   "size": 11,
+   "kind": "function",
+   "comment": "Busy-wait countdown on X:A (about 4 cycles per count)."
+  },
+  {
+   "name": "DelayLoopWithCopFeed",
+   "address": 44456,
+   "size": 36,
+   "kind": "function",
+   "comment": "n x DelayLoop16($3E0), feeding the COP each pass (about 1 ms per n)."
+  },
+  {
+   "name": "CalculateCrc16",
+   "address": 44492,
+   "size": 99,
+   "kind": "function",
+   "comment": "CalculateCrc16(ptr H:X, len16): table-driven CRC-16/CCITT (poly $1021) init $FFFF; feeds the COP."
+  },
+  {
+   "name": "InitMscan",
+   "address": 44591,
+   "size": 101,
+   "kind": "function",
+   "comment": "MSCAN init: CLKSRC=bus, CBTR1=$14, CBTR0 BRP by bitrate index (0 = 500 kbit/s @ 8 MHz), resets comms node IDs."
+  },
+  {
+   "name": "SetMscanFilterTable",
+   "address": 44692,
+   "size": 8,
+   "kind": "function",
+   "comment": "Stores a pointer to an 8-byte filter (from config) and calls ConfigureMscanAcceptanceFilters."
+  },
+  {
+   "name": "ConfigureMscanAcceptanceFilters",
+   "address": 44700,
+   "size": 196,
+   "kind": "function",
+   "comment": "Programs CIDAR/CIDMR for the comms ID block plus the user filter, CRIER=1 (RXFIE)."
+  },
+  {
+   "name": "IsrMscanReceive",
+   "address": 44896,
+   "size": 264,
+   "kind": "function",
+   "comment": "Vector $FFD6; PDM Manager comms IDs (default $3F0-$3FF) handled here, everything else to ParseUserCanReceiveFrame."
+  },
+  {
+   "name": "ProcessCommsRequest",
+   "address": 45160,
+   "size": 175,
+   "kind": "function",
+   "comment": "Main-loop side of the PDM Manager CAN protocol: request types 9 connect, 10 erase, 13 write, 14 read; discovery beacon."
+  },
+  {
+   "name": "HandleCommsReadMemory",
+   "address": 45335,
+   "size": 225,
+   "kind": "function",
+   "comment": "Read {region, offset, len}: streams data frames on TXB2, 8 frames per block then waits for flow control."
+  },
+  {
+   "name": "SendCommsReadDataFrame",
+   "address": 45560,
+   "size": 202,
+   "kind": "function",
+   "comment": "Sends the next up-to-8-byte chunk of a comms read on TXB2."
+  },
+  {
+   "name": "SendCommsResponse",
+   "address": 45762,
+   "size": 86,
+   "kind": "function",
+   "comment": "SendCommsResponse(status, a, b, c, d): TXB2 frame ID (g_commsTxNode<<4)|$F, data {reqType, seq, status, ?, a, b, c, d}."
+  },
+  {
+   "name": "IsrMscanTransmit",
+   "address": 45848,
+   "size": 62,
+   "kind": "function",
+   "comment": "Vector $FFD4; disables TXE2 interrupt, continues read streaming or arms the 50 ms tx timeout."
+  },
+  {
+   "name": "HandleCommsConnect",
+   "address": 45910,
+   "size": 127,
+   "kind": "function",
+   "comment": "Connect request: if serial and CRC match, adopt new rx/tx node IDs, reprogram filters, ack."
+  },
+  {
+   "name": "SendCommsDiscoveryBeacon",
+   "address": 46037,
+   "size": 122,
+   "kind": "function",
+   "comment": "TXB2 29-bit discovery beacon {3, $11, serialIdHi, serialIdLo, rxNode, txNode, counter}."
+  },
+  {
+   "name": "HandleCommsWriteMemory",
+   "address": 46159,
+   "size": 435,
+   "kind": "function",
+   "comment": "Write {region, ?, offHi, offLo, ?, len, data...}: RAM or FLASH-2 via FlashProgramBytes, gated by CheckRegionAccessAllowed."
+  },
+  {
+   "name": "HandleCommsEraseFlash",
+   "address": 46594,
+   "size": 231,
+   "kind": "function",
+   "comment": "Erase {region, offset, length} in FLASH-2 ($1E20-$7FFF) via FlashErasePages."
+  },
+  {
+   "name": "SetDiscoveryBeaconEnabled",
+   "address": 46825,
+   "size": 15,
+   "kind": "function",
+   "comment": "g_beaconEnabled = (X:A != 0)."
+  },
+  {
+   "name": "RequestDiscoveryBeacon",
+   "address": 46840,
+   "size": 6,
+   "kind": "function",
+   "comment": "g_beaconRequested=1."
+  },
+  {
+   "name": "TickCommsTimers1ms",
+   "address": 46846,
+   "size": 15,
+   "kind": "function",
+   "comment": "Decrements g_commsTxTimeout and the 16-bit g_beaconTimer."
+  },
+  {
+   "name": "ResetCommsStateUnused",
+   "address": 46861,
+   "size": 40,
+   "kind": "function",
+   "comment": "No callers found; resets the comms rx buffer pointer and state flags."
+  },
+  {
+   "name": "FlashProgramBytes",
+   "address": 46902,
+   "size": 140,
+   "kind": "function",
+   "comment": "FlashProgramBytes(dst, src, count16): FLASH-2 row programming via FL2CR; refuses $0980-$1B7F."
+  },
+  {
+   "name": "FlashErasePages",
+   "address": 47042,
+   "size": 126,
+   "kind": "function",
+   "comment": "FlashErasePages(start, len): 128-byte page erase loop via FL2CR; refuses $0980-$1B7F."
+  },
+  {
+   "name": "IsrUnusedDefault",
+   "address": 47168,
+   "size": 1,
+   "kind": "function",
+   "comment": "RTI; target of all unused vector-table entries."
+  },
+  {
+   "name": "DeriveUnlockKeysFromSerial",
+   "address": 47169,
+   "size": 77,
+   "kind": "function",
+   "comment": "g_derivedUnlockKeys = factory serial word ($0464:$0465) XOR $B1CC / $C1E5."
+  },
+  {
+   "name": "LoadFeatureUnlockState",
+   "address": 47246,
+   "size": 113,
+   "kind": "function",
+   "comment": "Picks the newer key bank ($0480 or $7A80), copies 11 bytes to $008E, compares with derived keys -> g_featureUnlockFlags."
+  },
+  {
+   "name": "StoreFeatureUnlockKeys",
+   "address": 47359,
+   "size": 106,
+   "kind": "function",
+   "comment": "Writes pending keys + $AAAA marker + sequence to the other key bank, erases the old one, reloads."
+  },
+  {
+   "name": "ProcessFeatureUnlockCommand",
+   "address": 47465,
+   "size": 218,
+   "kind": "function",
+   "comment": "g_unlockCmd: $11/$22 store key, $33/$44 verify key, $55 clear; result in g_unlockResult."
+  },
+  {
+   "name": "CheckRegionAccessAllowed",
+   "address": 47683,
+   "size": 28,
+   "kind": "function",
+   "comment": "Region 7 (except sub-op $0E) requires g_featureUnlockFlags bit1."
+  },
+  {
+   "name": "InitFeatureUnlock",
+   "address": 47711,
+   "size": 42,
+   "kind": "function",
+   "comment": "MoTeC option licensing init (keys derived from the factory serial, two flash key banks)."
+  },
+  {
+   "name": "ParseSerialNumberDigits",
+   "address": 47753,
+   "size": 81,
+   "kind": "function",
+   "comment": "Parses the 5 ASCII digits at fact_SerialAscii ($047A) into a 16-bit serial number."
+  },
+  {
+   "name": "GetModelTypeFromFactoryData",
+   "address": 47834,
+   "size": 38,
+   "kind": "function",
+   "comment": "If $046E=='P': model char $0472 '2'->0 PDM32, '6'->1 PDM16, '0'->2 PDM30, '5'->3 PDM15; else $FF."
+  },
+  {
+   "name": "GetFactoryDataVersion",
+   "address": 47872,
+   "size": 13,
+   "kind": "function",
+   "comment": "Returns $0473 if the 'P' info block is present, else $FF."
+  },
+  {
+   "name": "Startup",
+   "address": 47885,
+   "size": 122,
+   "kind": "function",
+   "comment": "CodeWarrior HC08 C startup reached via app_EntryJump; SP=$0934, zero-init/copy-down, then MainLoop."
+  },
+  {
+   "name": "RtCopyToZeroPage",
+   "address": 48007,
+   "size": 21,
+   "kind": "function",
+   "comment": "Copies g_rtScratch bytes from H:X to the zero-page address on the stack."
+  },
+  {
+   "name": "RtMul16x16",
+   "address": 48028,
+   "size": 27,
+   "kind": "function",
+   "comment": "16x16->16 multiply: (g_rtScratch:A) * (H:X); high byte in g_rtScratch."
+  },
+  {
+   "name": "RtSwitchJumpTable",
+   "address": 48055,
+   "size": 19,
+   "kind": "function",
+   "comment": "CodeWarrior switch helper: inline table of 16-bit addresses after the JSR, jumps to table[A]."
+  },
+  {
+   "name": "RtSwitchSearchTable16",
+   "address": 48074,
+   "size": 115,
+   "kind": "function",
+   "comment": "CodeWarrior switch on a 16-bit value ($00F7:A) using a sorted {target,key} table at H:X."
+  },
+  {
+   "name": "RtLongCompare",
+   "address": 48189,
+   "size": 38,
+   "kind": "function",
+   "comment": "CodeWarrior 32-bit runtime (accumulator g_rtLongAcc $00F3..$00F6, operand at H:X): compare."
+  },
+  {
+   "name": "RtLongAddInPlace",
+   "address": 48227,
+   "size": 25,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongShiftLeftInPlace",
+   "address": 48252,
+   "size": 13,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongOrInPlace",
+   "address": 48265,
+   "size": 25,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongSubInPlace",
+   "address": 48290,
+   "size": 25,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongShiftRightInPlace",
+   "address": 48315,
+   "size": 13,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongSubFromAcc",
+   "address": 48328,
+   "size": 26,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongLoadAcc",
+   "address": 48354,
+   "size": 11,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongAccShiftRight",
+   "address": 48365,
+   "size": 34,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongTestZero",
+   "address": 48399,
+   "size": 22,
+   "kind": "function"
+  },
+  {
+   "name": "RtDivU16Wrapper",
+   "address": 48421,
+   "size": 8,
+   "kind": "function"
+  },
+  {
+   "name": "RtDivU16",
+   "address": 48429,
+   "size": 70,
+   "kind": "function",
+   "comment": "Unsigned 16-bit divide using the DIV instruction (H:A / X)."
+  },
+  {
+   "name": "RtLongAccFromAX",
+   "address": 48499,
+   "size": 7,
+   "kind": "function"
+  },
+  {
+   "name": "RtLongAccFromHX",
+   "address": 48506,
+   "size": 9,
+   "kind": "function"
+  },
+  {
+   "name": "tbl_VectorJumpTable",
+   "address": 49979,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "tbl_BoardTempLookup",
+   "address": 50054,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "str_Copyright",
+   "address": 50310,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "str_FirmwareVersion",
+   "address": 50335,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "k_SerialFallbackOffset",
+   "address": 50369,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "tbl_AdcScanPdm32",
+   "address": 50373,
+   "kind": "table",
+   "size": 360
+  },
+  {
+   "name": "tbl_AdcScanPdm16",
+   "address": 50733,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "tbl_AdcScanPdm30",
+   "address": 51093,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "tbl_AdcScanPdm15",
+   "address": 51453,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "tbl_TestStepHandlers",
+   "address": 51959,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "tbl_TestCommandSwitch",
+   "address": 51981,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "tbl_OutputPinMap",
+   "address": 52003,
+   "kind": "table",
+   "size": 64
+  },
+  {
+   "name": "tbl_OutputLoadLookup",
+   "address": 52067,
+   "kind": "table",
+   "size": 16
+  },
+  {
+   "name": "tbl_Crc16",
+   "address": 52579,
+   "kind": "table",
+   "size": 512
+  },
+  {
+   "name": "str_Version200Const",
+   "address": 53091,
+   "kind": "data",
+   "size": 4
+  },
+  {
+   "name": "app_ImageTrailer",
+   "address": 53095,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "boot_HardwareRevision",
+   "address": 64896,
+   "kind": "data",
+   "size": 16
+  },
+  {
+   "name": "SRSR",
+   "address": 65025,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "BRKAR",
+   "address": 65026,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "BFCR",
+   "address": 65027,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "INT1",
+   "address": 65028,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "INT2",
+   "address": 65029,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "FL2CR",
+   "address": 65032,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "FL2BPR",
+   "address": 65409,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "FL1CR",
+   "address": 65416,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "VECTOR_IRQ",
+   "address": 65530,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "VECTOR_SWI",
+   "address": 65532,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "VECTOR_Reset",
+   "address": 65534,
+   "kind": "register",
+   "size": 1
+  },
+  {
+   "name": "COPCTL",
+   "address": 65535,
+   "kind": "register",
+   "size": 1
+  }
+ ]
+}
