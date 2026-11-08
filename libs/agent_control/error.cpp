@@ -17,6 +17,8 @@ std::string_view toString(ErrorCode code)
         case ErrorCode::kGuiThreadBusy:        return "GUI_THREAD_BUSY";
         case ErrorCode::kTimeout:              return "TIMEOUT";
         case ErrorCode::kUnsupportedInApp:     return "UNSUPPORTED_IN_APP";
+        case ErrorCode::kWrongMode:            return "WRONG_MODE";
+        case ErrorCode::kFailed:               return "FAILED";
         case ErrorCode::kInternal:             return "INTERNAL";
     }
     return "INTERNAL";
@@ -40,6 +42,8 @@ int jsonRpcCode(ErrorCode code)
         case ErrorCode::kTimeout:              return 1007;
         case ErrorCode::kUnsupportedInApp:     return 1008;
         case ErrorCode::kInternal:             return 1009;
+        case ErrorCode::kWrongMode:            return 1010;
+        case ErrorCode::kFailed:               return 1011;
     }
     return 1009;
 }

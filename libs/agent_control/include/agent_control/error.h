@@ -32,6 +32,8 @@ enum class ErrorCode
     kGuiThreadBusy,         // GUI thread did not run our call in time.
     kTimeout,               // Operation itself timed out.
     kUnsupportedInApp,      // Method exists but not in this application.
+    kWrongMode,             // Needs the other mode: a pause on a process that is not running in real time.
+    kFailed,                // Understood and well-formed, but could not be done.
     kInternal,              // Handler threw, or an invariant broke.
 };
 
