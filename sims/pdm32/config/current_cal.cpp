@@ -10,7 +10,7 @@ namespace pdm::config {
 
 namespace {
 
-constexpr size_t kBlockBytes = 4 + layout::kOutputs * layout::kCalEntryBytes + 2;
+constexpr size_t kBlockBytes = kCurrentCalBlockBytes;
 constexpr CurrentCal kUnity = unity_current_cal();
 
 }  // namespace

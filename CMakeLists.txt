@@ -270,10 +270,11 @@ add_subdirectory(models)
 # -Werror block above applies from add_subdirectory(schemas) onwards, and a
 # tools/ added above it would silently opt out of every warning this tree treats
 # as load-bearing.
-add_subdirectory(tools)
 # Emulators standing in for hardware. Workstation-only like tools/, and under
-# the same warning block for the same reason.
+# the same warning block for the same reason. Before tools/, whose PDM32 dump
+# tool reads PDM_FIRMWARE_HEX, which sims/pdm32 declares.
 add_subdirectory(sims)
+add_subdirectory(tools)
 
 # Local docs preview (manual): serves the Jekyll site from the docs directory.
 # Usage: cmake --build . --target docs_serve

@@ -16,16 +16,23 @@ set(PDM_FIRMWARE_HEX "$ENV{HOME}/src/motec/MoTeC/PDM Manager/1.9/pdm.hex"
 #            current calibration, factory data
 #   top/     the whole system: instance, session, scenarios, stimulus,
 #            debugger, the agent methods
+# config/ on its own: the unit's formats (CRC, layout, calibration), which
+# tools/pdm_flash_dump uses without the emulator.
+add_library(pdm32_config STATIC
+    config/config_builder.cpp
+    config/crc16.cpp
+    config/current_cal.cpp
+    config/image_set.cpp
+)
+target_include_directories(pdm32_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(pdm32_config PUBLIC hc08 nlohmann_json::nlohmann_json)
+
 add_library(pdm32_sim_core STATIC
     board/boot_hle.cpp
     board/hi_side_switch.cpp
     board/pdm32.cpp
     board/wiring.cpp
     plant/loads.cpp
-    config/config_builder.cpp
-    config/crc16.cpp
-    config/current_cal.cpp
-    config/image_set.cpp
     top/control.cpp
     top/debugger.cpp
     top/instance.cpp
@@ -41,6 +48,7 @@ add_library(pdm32_sim_core STATIC
 target_include_directories(pdm32_sim_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(pdm32_sim_core
     PUBLIC
+        pdm32_config
         can
         gz60
         hc08

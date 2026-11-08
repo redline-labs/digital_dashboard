@@ -24,3 +24,7 @@ add_subdirectory(fake_service)
 # whose state_estimator pipeline both reuse.
 add_subdirectory(estimator_sim)
 add_subdirectory(estimator_offline)
+
+# Reads a MoTeC PDM32 over any can:: channel, read-only; also what turns a
+# dumped calibration into sims/pdm32's header.
+add_subdirectory(pdm_flash_dump)

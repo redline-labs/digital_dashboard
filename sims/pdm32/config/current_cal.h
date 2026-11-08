@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "pdm32/config/layout.h"
+
 namespace pdm::config {
 
 struct OutputCurrentCal {
@@ -56,6 +58,9 @@ constexpr CurrentCal unity_current_cal() {
 }
 
 // The block's bytes (format 1, length, records, CRC), to be placed at layout::kCurrentCal.
+// The block's size: a 4-byte header, 36 bytes per output, the CRC.
+inline constexpr size_t kCurrentCalBlockBytes = 4 + layout::kOutputs * layout::kCalEntryBytes + 2;
+
 std::vector<uint8_t> encode_current_cal(const CurrentCal& cal);
 
 // Parses a block (as dumped or as encoded). Throws std::runtime_error on a bad header, length or CRC.
