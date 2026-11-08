@@ -281,6 +281,40 @@ void finish_command_buffer(std::vector<uint8_t>& buffer, size_t bufferSize)
     // the device had to read as no-op commands.
 }
 
+Result<void> check_command_group(std::span<const uint8_t> group)
+{
+    if (group.empty() || group.size() > kCommandBufferSize || group.size() % kCommandSize != 0)
+    {
+        return invalid_argument(fmt::format(
+            "a command group of {} bytes; a group is whole {}-byte commands within one {}-byte "
+            "buffer",
+            group.size(), kCommandSize, kCommandBufferSize));
+    }
+    return {};
+}
+
+std::vector<std::vector<uint8_t>> build_start_groups(uint8_t channel, bool listenOnly)
+{
+    std::vector<std::vector<uint8_t>> groups(2);
+
+    // Pass everything: filtering belongs to whoever reads the topic, and a
+    // filter set here would be invisible to them.
+    append_std_filter_pass_all(groups[0], channel);
+
+    // Error reporting is OFF until asked for. Without it the device sends no
+    // error records at all, so errorFrames, the error counters and every bus
+    // state above ErrorActive stay at their initial values however badly the
+    // bus is behaving.
+    append_options(groups[1], channel, true, kOptionError, 0);
+    // The adapter's timestamp-calibration traffic is a record per frame of
+    // overhead. Cleared separately: enabling and disabling are different
+    // opcodes.
+    append_options(groups[1], channel, false, 0, kOptionCalibrationMessages);
+    append_command(groups[1], channel, listenOnly ? Opcode::ListenOnlyMode : Opcode::NormalMode);
+
+    return groups;
+}
+
 // ============================================================================
 // Received records
 // ============================================================================

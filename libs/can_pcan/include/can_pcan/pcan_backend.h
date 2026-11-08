@@ -49,10 +49,8 @@ struct PcanOptions
     // do without being asked.
     bool detachKernelDriver { false };
 
-    // How long a bulk read waits before giving the reader thread a chance to
-    // notice it should stop. Not a bus timeout -- a quiet bus produces no
-    // transfers at all, which is normal.
-    unsigned int readTimeoutMs { 100 };
+    // There is no read timeout: the data endpoint is read with transfers
+    // kept posted until close (pcan_device.h says why).
     unsigned int writeTimeoutMs { 1000 };
 };
 

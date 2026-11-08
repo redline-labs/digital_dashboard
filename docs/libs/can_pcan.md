@@ -96,15 +96,31 @@ would turn one bad transfer into a stream of plausible nonsense. Everything
 decoded before the bad record is still returned.
 
 Opcode `0x00d` is reserved and the barrier is `0x010`; a command the device
-does not implement is ignored in silence. Commands are eight bytes each,
-several packed into one buffer padded to 512 bytes (64 on a low-speed link)
-and terminated by an end-of-collection marker. The "driver loaded" vendor
-request is what takes the adapter out of its idle state; without it nothing
-answers on the bulk endpoints. Calibration messages are the device's own
-timestamp traffic and are switched off, or they arrive as a stream of records
-nothing wants. `readTimeoutMs` is how long a bulk read waits before the reader
-thread checks whether it should stop, not a bus timeout; a quiet bus produces
-no transfers at all.
+does not implement is ignored in silence. Commands are eight bytes each. A
+group of them goes in one transfer of at most 512 bytes (64 on a low-speed
+link), terminated by an end-of-collection marker when there is room, and not
+padded. The "driver loaded" vendor request is what takes the adapter out of
+its idle state; without it nothing answers on the bulk endpoints. Calibration
+messages are the device's own timestamp traffic and are switched off, or they
+arrive as a stream of records nothing wants.
+
+**A command group is never split across transfers.** Starting a channel is two
+groups: the 64-row pass-all filter, which fills a buffer exactly, then the
+options and the mode. When the filter and the rest went out as one 536-byte
+transfer, a PCAN-USB Pro FD on macOS was left in reset. It was silent and
+acknowledged nothing, and no error appeared anywhere. `check_command_group()`
+is what `send_commands()` enforces, and `build_start_groups()` is unit-tested
+against it.
+
+**The data endpoint is read with posted transfers, not timed reads.** Four
+bulk reads are kept submitted with no timeout, resubmitted as each completes,
+and cancelled only at close. A reader thread runs libusb's event loop until
+the last one has come back. The earlier loop of 100 ms synchronous reads
+timed out ten times a second on a quiet bus. On macOS each timeout makes
+libusb abort the pipe and clear the endpoint's halt, and after a session of
+that a Pro FD stopped answering even control requests until it was replugged.
+An unplug ends every posted read, and the first to see it tells each open
+channel.
 
 ## Tests
 

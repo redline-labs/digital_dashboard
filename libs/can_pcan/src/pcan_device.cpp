@@ -5,6 +5,7 @@
 #include <libusb.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace can::pcan
@@ -14,6 +15,14 @@ namespace
 
 // A bulk read buffer big enough for a full high-speed transfer of records.
 constexpr size_t kReadBufferSize = 2048;
+
+// Reads kept posted on the data-in endpoint. Several, as the reference driver
+// keeps, so a burst of records never waits on a resubmit.
+constexpr size_t kReadTransfers = 4;
+
+// How often the reader comes out of libusb's event handling to see whether
+// every posted read has come back. Not a USB timeout: the reads have none.
+constexpr suseconds_t kEventPollMicros = 100000;
 
 // PEAK's vendor requests go to the "other" recipient rather than the device or
 // an interface. Composed as a byte because libusb's request-type,
@@ -51,9 +60,10 @@ Error from_libusb(int code, std::string what)
 
 } // namespace
 
-PcanDevice::PcanDevice(libusb_device_handle* handle, uint16_t productId, uint8_t usbInterface,
-                       const PcanOptions& options)
-    : handle_(handle)
+PcanDevice::PcanDevice(libusb_context* context, libusb_device_handle* handle, uint16_t productId,
+                       uint8_t usbInterface, const PcanOptions& options)
+    : context_(context)
+    , handle_(handle)
     , productId_(productId)
     , usbInterface_(usbInterface)
     , options_(options)
@@ -106,9 +116,8 @@ Result<std::shared_ptr<PcanDevice>> PcanDevice::open(libusb_context* context,
         return std::unexpected(error);
     }
 
-    (void)context;
     auto owned = std::shared_ptr<PcanDevice>(
-        new PcanDevice(handle, productId, usbInterface, options));
+        new PcanDevice(context, handle, productId, usbInterface, options));
 
 #if defined(__linux__)
     // The in-tree peak_usb driver claims these adapters at plug-in. Taking the
@@ -189,7 +198,11 @@ Result<std::shared_ptr<PcanDevice>> PcanDevice::open(libusb_context* context,
 
     SPDLOG_INFO("[pcan] opened {} interface {}", owned->description_, usbInterface);
 
-    owned->start_reader();
+    auto reading = owned->start_reader();
+    if (!reading.has_value())
+    {
+        return std::unexpected(reading.error());
+    }
     return owned;
 }
 
@@ -211,8 +224,15 @@ void PcanDevice::detach(uint8_t localChannel)
     }
 }
 
-Result<void> PcanDevice::send_commands(std::vector<uint8_t> buffer)
+Result<void> PcanDevice::send_commands(std::vector<uint8_t> group)
 {
+    auto valid = check_command_group(group);
+    if (!valid.has_value())
+    {
+        return valid;
+    }
+
+    std::vector<uint8_t> buffer = std::move(group);
     finish_command_buffer(buffer);
 
     std::lock_guard<std::mutex> lock(writeMutex_);
@@ -259,25 +279,77 @@ Result<void> PcanDevice::send_frames(uint8_t localChannel, std::span<const uint8
     return {};
 }
 
-void PcanDevice::start_reader()
+Result<void> PcanDevice::start_reader()
 {
+    readBuffers_.assign(kReadTransfers, std::vector<uint8_t>(kReadBufferSize));
     reading_ = true;
-    reader_ = std::thread([this] { reader_loop(); });
+    for (std::vector<uint8_t>& buffer : readBuffers_)
+    {
+        libusb_transfer* const transfer = libusb_alloc_transfer(0);
+        if (transfer == nullptr)
+        {
+            stop_reader();
+            return io_error("cannot allocate a USB transfer");
+        }
+        readTransfers_.push_back(transfer);
+
+        libusb_fill_bulk_transfer(transfer, handle_, firmware_.dataInEndpoint, buffer.data(),
+                                  static_cast<int>(buffer.size()), &PcanDevice::on_read_complete,
+                                  this, 0);
+        const int rc = libusb_submit_transfer(transfer);
+        if (rc != LIBUSB_SUCCESS)
+        {
+            stop_reader();
+            return std::unexpected(from_libusb(rc, "cannot start reading from the adapter"));
+        }
+        ++readsInFlight_;
+    }
+
+    reader_ = std::thread([this] { handle_events_until_reads_return(); });
+    return {};
+}
+
+void PcanDevice::handle_events_until_reads_return()
+{
+    // Until every posted read has come back -- completed for good, cancelled
+    // or failed. Freeing a transfer libusb still holds is a use after free.
+    while (readsInFlight_ > 0)
+    {
+        timeval interval { 0, kEventPollMicros };
+        libusb_handle_events_timeout_completed(context_, &interval, nullptr);
+    }
 }
 
 void PcanDevice::stop_reader()
 {
-    if (reader_.joinable())
+    reading_ = false;
+    for (libusb_transfer* transfer : readTransfers_)
     {
-        reading_ = false;
-        // The read has a timeout, so the thread notices within one of those
-        // rather than needing the transfer cancelled out from under it.
-        reader_.join();
+        // LIBUSB_ERROR_NOT_FOUND means it already came back; either way its
+        // callback does not resubmit it now.
+        libusb_cancel_transfer(transfer);
     }
 
-    // Said once, here, instead of per transfer in the loop. Zero is the normal
-    // answer and says nothing; anything else is the first thing worth knowing
-    // about a capture that looks wrong.
+    if (reader_.joinable())
+    {
+        reader_.join();
+    }
+    else
+    {
+        // start_reader failed part way: nothing is handling events, so the
+        // cancellations are driven to completion here.
+        handle_events_until_reads_return();
+    }
+
+    for (libusb_transfer* transfer : readTransfers_)
+    {
+        libusb_free_transfer(transfer);
+    }
+    readTransfers_.clear();
+
+    // Said once, here, instead of per transfer. Zero is the normal answer and
+    // says nothing; anything else is the first thing worth knowing about a
+    // capture that looks wrong.
     const uint64_t reads = readFailures_.exchange(0, std::memory_order_relaxed);
     const uint64_t decodes = decodeFailures_.exchange(0, std::memory_order_relaxed);
     if (reads != 0 || decodes != 0)
@@ -287,72 +359,111 @@ void PcanDevice::stop_reader()
     }
 }
 
-void PcanDevice::reader_loop()
+void PcanDevice::on_read_complete(libusb_transfer* transfer)
 {
-    std::vector<uint8_t> buffer(kReadBufferSize);
+    auto* const device = static_cast<PcanDevice*>(transfer->user_data);
 
-    while (reading_)
+    switch (transfer->status)
     {
-        int transferred = 0;
-        const int rc = libusb_bulk_transfer(handle_, firmware_.dataInEndpoint, buffer.data(),
-                                            static_cast<int>(buffer.size()), &transferred,
-                                            options_.readTimeoutMs);
+    case LIBUSB_TRANSFER_COMPLETED:
+        device->dispatch(std::span<const uint8_t>(
+            transfer->buffer, static_cast<size_t>(std::max(0, transfer->actual_length))));
+        break;
 
-        if (rc == LIBUSB_ERROR_TIMEOUT)
-        {
-            // A quiet bus produces no transfers. Normal.
-            continue;
-        }
+    case LIBUSB_TRANSFER_CANCELLED:
+        --device->readsInFlight_;
+        return;
+
+    case LIBUSB_TRANSFER_NO_DEVICE:
+        device->report_device_lost();
+        --device->readsInFlight_;
+        return;
+
+    case LIBUSB_TRANSFER_ERROR:
+    case LIBUSB_TRANSFER_TIMED_OUT:
+    case LIBUSB_TRANSFER_STALL:
+    case LIBUSB_TRANSFER_OVERFLOW:
+        // Counted, not logged: a failing link fails every transfer.
+        device->readFailures_.fetch_add(1, std::memory_order_relaxed);
+        break;
+    }
+
+    if (!device->reading_)
+    {
+        --device->readsInFlight_;
+        return;
+    }
+
+    const int rc = libusb_submit_transfer(transfer);
+    if (rc != LIBUSB_SUCCESS)
+    {
+        // A transfer that fails with LIBUSB_TRANSFER_ERROR on an unplug (as
+        // some platforms report it) is caught here, where resubmitting says
+        // what the status did not.
         if (rc == LIBUSB_ERROR_NO_DEVICE)
         {
-            SPDLOG_ERROR("[pcan] the adapter was unplugged");
-            // Said to every open channel. Breaking out alone left each one
-            // reporting itself running while receiving nothing, forever --
-            // a bridge that looked healthy on a dead adapter.
+            device->report_device_lost();
+        }
+        else
+        {
+            device->readFailures_.fetch_add(1, std::memory_order_relaxed);
+        }
+        --device->readsInFlight_;
+    }
+}
+
+void PcanDevice::report_device_lost()
+{
+    if (lostReported_.exchange(true))
+    {
+        return;
+    }
+    reading_ = false;
+
+    SPDLOG_ERROR("[pcan] the adapter was unplugged");
+    // Said to every open channel. Ending the reads alone left each one
+    // reporting itself running while receiving nothing, forever -- a bridge
+    // that looked healthy on a dead adapter.
+    std::lock_guard<std::mutex> lock(sinkMutex_);
+    for (RecordSink* sink : sinks_)
+    {
+        if (sink != nullptr)
+        {
+            sink->on_device_lost();
+        }
+    }
+}
+
+void PcanDevice::dispatch(std::span<const uint8_t> bytes)
+{
+    if (bytes.empty())
+    {
+        return;
+    }
+
+    auto decoded = decode_records(bytes);
+    if (decoded.error.has_value())
+    {
+        // The records before the bad one are still good and are still
+        // dispatched below; only the rest of this transfer is lost.
+        decodeFailures_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    for (const auto& record : decoded.records)
+    {
+        RecordSink* sink = nullptr;
+        {
             std::lock_guard<std::mutex> lock(sinkMutex_);
-            for (RecordSink* sink : sinks_)
+            if (record.channel < sinks_.size())
             {
-                if (sink != nullptr)
-                {
-                    sink->on_device_lost();
-                }
+                sink = sinks_[record.channel];
             }
-            break;
         }
-        if (rc != LIBUSB_SUCCESS)
+        // A record for a channel nobody opened is not an error: the other
+        // channel of a Pro FD is live whether or not we asked for it.
+        if (sink != nullptr)
         {
-            readFailures_.fetch_add(1, std::memory_order_relaxed);
-            continue;
-        }
-        if (transferred <= 0)
-        {
-            continue;
-        }
-
-        auto decoded = decode_records(std::span(buffer.data(), static_cast<size_t>(transferred)));
-        if (decoded.error.has_value())
-        {
-            // The records before the bad one are still good and are still
-            // dispatched below; only the rest of this transfer is lost.
-            decodeFailures_.fetch_add(1, std::memory_order_relaxed);
-        }
-
-        for (const auto& record : decoded.records)
-        {
-            RecordSink* sink = nullptr;
-            {
-                std::lock_guard<std::mutex> lock(sinkMutex_);
-                if (record.channel < sinks_.size())
-                {
-                    sink = sinks_[record.channel];
-                }
-            }
-            // A record for a channel nobody opened is not an error: the other
-            // channel of a Pro FD is live whether or not we asked for it.
-            if (sink != nullptr)
-            {
-                sink->on_record(record);
-            }
+            sink->on_record(record);
         }
     }
 }

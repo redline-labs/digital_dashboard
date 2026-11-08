@@ -135,6 +135,50 @@ void test_command_framing()
           "a full buffer is not grown past what the device reads");
 }
 
+void test_command_groups()
+{
+    using can::pcan::check_command_group;
+
+    // Every group starting a channel sends must fit ONE transfer: a group cut
+    // across two (the 64-row filter with the options and mode behind it) left
+    // a Pro FD in reset, silent and unacknowledged.
+    for (const bool listenOnly : { false, true })
+    {
+        const auto groups = can::pcan::build_start_groups(1, listenOnly);
+        check(groups.size() == 2, "starting a channel is two groups");
+        for (const auto& group : groups)
+        {
+            check(check_command_group(group).has_value(),
+                  fmt::format("a start group of {} bytes is one valid group", group.size()));
+        }
+        check(groups[0].size() == can::pcan::kCommandBufferSize,
+              "the pass-all filter fills a command buffer exactly");
+
+        // The mode command is last, so the controller leaves reset only after
+        // everything else has been taken.
+        const auto& start = groups.back();
+        const uint16_t last = static_cast<uint16_t>(start[start.size() - 8]
+                                                    | (start[start.size() - 7] << 8));
+        const auto expected = can::pcan::opcode_channel(
+            1, listenOnly ? can::pcan::Opcode::ListenOnlyMode : can::pcan::Opcode::NormalMode);
+        check(last == expected, "the start groups end with the mode that leaves reset");
+    }
+
+    // Everything at once is exactly what the device does not take.
+    std::vector<uint8_t> merged;
+    for (const auto& group : can::pcan::build_start_groups(0, false))
+    {
+        merged.insert(merged.end(), group.begin(), group.end());
+    }
+    check(!check_command_group(merged).has_value(), "a group over one buffer is refused");
+
+    std::vector<uint8_t> partial(can::pcan::kCommandSize + 3, 0);
+    check(!check_command_group(partial).has_value(), "a part-command group is refused");
+    check(!check_command_group({}).has_value(), "an empty group is refused");
+    std::vector<uint8_t> full(can::pcan::kCommandBufferSize, 0);
+    check(check_command_group(full).has_value(), "a full buffer is one group");
+}
+
 void test_timing_slow_encoding()
 {
     // EVERY segment is counted from zero, not just the prescaler. This was
@@ -694,6 +738,7 @@ int main()
     test_product_table();
     test_opcode_channel_packing();
     test_command_framing();
+    test_command_groups();
     test_timing_slow_encoding();
     test_timing_field_widths();
     test_timing_fast_encoding();

@@ -206,8 +206,20 @@ void append_options(std::vector<uint8_t>& buffer, uint8_t channel, bool enable, 
 void append_std_filter_pass_all(std::vector<uint8_t>& buffer, uint8_t channel);
 void append_led(std::vector<uint8_t>& buffer, uint8_t channel, uint8_t mode);
 
-// Pads a built-up command buffer to the size the device expects.
+// Terminates a built-up command buffer, when there is room for the terminator.
 void finish_command_buffer(std::vector<uint8_t>& buffer, size_t bufferSize = kCommandBufferSize);
+
+// A command GROUP is what goes in one transfer to the command endpoint: whole
+// commands, at most one buffer. The adapter does not take a group cut across
+// transfers -- the 64-row acceptance filter split over two left a PCAN-USB Pro
+// FD in reset, silent and unacknowledged, on macOS. So callers group and the
+// device never splits; this is the check it applies.
+Result<void> check_command_group(std::span<const uint8_t> group);
+
+// What starting a channel sends, as the groups the reference driver sends it
+// in: the pass-all filter (whose 64 rows fill a buffer exactly), then error
+// reporting on, calibration traffic off, and the mode that leaves reset.
+std::vector<std::vector<uint8_t>> build_start_groups(uint8_t channel, bool listenOnly);
 
 // The clock selector for ClockSet. 80 MHz is the default and the only one the
 // bit-timing limits above describe.

@@ -120,27 +120,15 @@ public:
             return applied;
         }
 
-        std::vector<uint8_t> commands;
-        // Pass everything: filtering belongs to whoever reads the topic, and a
-        // filter set here would be invisible to them.
-        append_std_filter_pass_all(commands, localChannel_);
-        // Error reporting is OFF until asked for. Without this the device
-        // sends no error records at all, so errorFrames, the error counters
-        // and every bus state above ErrorActive stay at their initial values
-        // however badly the bus is behaving -- a silent, permanently healthy
-        // looking channel.
-        append_options(commands, localChannel_, true, kOptionError, 0);
-        // The adapter's own timestamp-calibration traffic is of no use to a
-        // bridge and would be a record per frame of overhead. Cleared
-        // separately because enabling and disabling are different opcodes.
-        append_options(commands, localChannel_, false, 0, kOptionCalibrationMessages);
-        append_command(commands, localChannel_,
-                       listenOnly_ ? Opcode::ListenOnlyMode : Opcode::NormalMode);
-
-        auto sent = device_->send_commands(std::move(commands));
-        if (!sent.has_value())
+        // One transfer per group: the filter alone fills a command buffer,
+        // and a group cut across transfers is not taken (pucan.h).
+        for (auto& group : build_start_groups(localChannel_, listenOnly_))
         {
-            return sent;
+            auto sent = device_->send_commands(std::move(group));
+            if (!sent.has_value())
+            {
+                return sent;
+            }
         }
 
         {
