@@ -29,8 +29,8 @@
 // first hardware-stamped frame and measures every later one from there, falling
 // back to arrival time for transmitted frames and for channels that supply no
 // stamps. See offset_for() in the implementation.
-#ifndef CAN_BRIDGE_TRC_RECORDER_H
-#define CAN_BRIDGE_TRC_RECORDER_H
+#ifndef CAN_ZENOH_TRC_RECORDER_H
+#define CAN_ZENOH_TRC_RECORDER_H
 
 #include "can_trc/trc.h"
 
@@ -45,7 +45,7 @@
 #include <string>
 #include <thread>
 
-namespace can_bridge
+namespace can_zenoh
 {
 
 class TrcRecorder
@@ -53,9 +53,10 @@ class TrcRecorder
 public:
     // `bus` is what goes in the trace's Bus column, so several channels
     // recorded from one bridge stay distinguishable. `busInfo` names the
-    // channel in the file's header table.
+    // channel in the file's header table, and `generatedBy` the program.
     static can::Result<std::unique_ptr<TrcRecorder>> create(const std::string& path, uint8_t bus,
-                                                            const can::trc::BusInfo& busInfo);
+                                                            const can::trc::BusInfo& busInfo,
+                                                            std::string generatedBy = "Redline can_bridge");
 
     ~TrcRecorder();
 
@@ -115,6 +116,6 @@ private:
     uint64_t hardwareOriginOffsetUs_ { 0 };
 };
 
-} // namespace can_bridge
+} // namespace can_zenoh
 
-#endif // CAN_BRIDGE_TRC_RECORDER_H
+#endif // CAN_ZENOH_TRC_RECORDER_H

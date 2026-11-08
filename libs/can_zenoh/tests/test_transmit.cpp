@@ -6,7 +6,7 @@
 // Here a channel's send() blocks until released; frames published meanwhile
 // must still be taken off the topic and queued, then sent in order.
 
-#include "bridged_channel.h"
+#include "can_zenoh/bridged_channel.h"
 
 #include "pub_sub/can_frame.h"
 #include "pub_sub/session_manager.h"
@@ -104,7 +104,7 @@ class GatedChannel : public can::Channel
     std::vector<uint32_t> sent_;
 };
 
-uint32_t queued(const can_bridge::BridgedChannel& bridged)
+uint32_t queued(const can_zenoh::BridgedChannel& bridged)
 {
     capnp::MallocMessageBuilder message;
     auto status = message.initRoot<CanBridgeChannelStatus>();
@@ -123,15 +123,15 @@ int main()
         return PROJECT_TEST_SKIP_CODE;
     }
 
-    can_bridge::ChannelConfig config;
+    can_zenoh::BridgeConfig config;
     config.name = "test";
     config.device = "gated:0";
-    config.txKey = "test/can_bridge/transmit/" + std::to_string(::getpid());
+    config.txKey = "test/can_zenoh/transmit/" + std::to_string(::getpid());
     config.publishRx = false;
     config.acceptTx = true;
 
     auto channel = std::make_shared<GatedChannel>();
-    can_bridge::BridgedChannel bridged(config, channel);
+    can_zenoh::BridgedChannel bridged(config, channel);
     bridged.start();
 
     pub_sub::ZenohPublisher<::CanFrame> publisher(config.txKey);

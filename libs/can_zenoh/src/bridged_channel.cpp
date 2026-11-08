@@ -1,4 +1,4 @@
-#include "bridged_channel.h"
+#include "can_zenoh/bridged_channel.h"
 
 #include "pub_sub/can_frame.h"
 
@@ -7,7 +7,7 @@
 #include <array>
 #include <utility>
 
-namespace can_bridge
+namespace can_zenoh
 {
 
 namespace
@@ -29,20 +29,7 @@ CanBusState to_schema_state(can::BusState state)
 
 }  // namespace
 
-can::OpenOptions openOptions(const ChannelConfig& config)
-{
-    can::OpenOptions open;
-    open.bitrate.nominalBps = config.bitrateBps;
-    open.bitrate.dataBps = config.dataBitrateBps;
-    open.bitrate.nominalSamplePointPermille = config.samplePointPermille;
-    open.bitrate.dataSamplePointPermille = config.dataSamplePointPermille;
-    open.listenOnly = config.listenOnly;
-    open.rxQueueDepth = config.rxQueueDepth;
-    open.start = true;
-    return open;
-}
-
-BridgedChannel::BridgedChannel(ChannelConfig config, std::shared_ptr<can::Channel> channel)
+BridgedChannel::BridgedChannel(BridgeConfig config, std::shared_ptr<can::Channel> channel)
     : config_(std::move(config))
     , channel_(std::move(channel))
 {
@@ -57,10 +44,14 @@ BridgedChannel::BridgedChannel(ChannelConfig config, std::shared_ptr<can::Channe
         busInfo.bus = config_.recordTrcBus;
         busInfo.name = config_.name;
         busInfo.connection = config_.device;
-        busInfo.bitrateBps = config_.bitrateBps;
-        busInfo.dataBitrateBps = config_.dataBitrateBps;
+        // What the channel actually runs at, which is what a reader of the
+        // trace needs -- not what was asked for.
+        const can::Bitrate bitrate = channel_->bitrate();
+        busInfo.bitrateBps = bitrate.nominalBps;
+        busInfo.dataBitrateBps = bitrate.dataBps;
 
-        auto recorder = TrcRecorder::create(config_.recordTrcPath, config_.recordTrcBus, busInfo);
+        auto recorder = TrcRecorder::create(config_.recordTrcPath, config_.recordTrcBus, busInfo,
+                                            config_.recordGeneratedBy);
         if (!recorder.has_value())
         {
             // Not fatal. A bridge that refused to carry traffic because a
@@ -305,4 +296,4 @@ void BridgedChannel::note_error(std::string message)
     lastError_ = std::move(message);
 }
 
-}  // namespace can_bridge
+}  // namespace can_zenoh

@@ -15,6 +15,8 @@
 #ifndef CAN_BRIDGE_NODE_CONFIG_H
 #define CAN_BRIDGE_NODE_CONFIG_H
 
+#include "can_zenoh/bridge_config.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -22,19 +24,17 @@
 namespace can_bridge
 {
 
-struct ChannelConfig
+// The topics, the trace and the name come from can_zenoh::BridgeConfig; what
+// is added here is the hardware.
+struct ChannelConfig : can_zenoh::BridgeConfig
 {
-    // How this bus is referred to everywhere above the hardware.
-    std::string name;
-
-    // Which adapter, as `<backend>:<device>[/<channel>]`:
+    // `device` (inherited) is which adapter, as `<backend>:<device>[/<channel>]`:
     //
     //     socketcan:can0     the kernel interface named can0
     //     pcan:0             the first PCAN adapter found, its channel 0
     //     pcan:0/1           that same adapter, channel 1
     //     pcan:LSN00123/1    the adapter with that serial, channel 1
     //     virtual:bench      a loopback bus, no hardware
-    std::string device;
 
     uint32_t bitrateBps { 500000 };
     // Zero means classic CAN. Anything else asks for CAN FD, and the adapter
@@ -51,35 +51,10 @@ struct ChannelConfig
     // anything being observed rather than driven.
     bool listenOnly { false };
 
-    // Where frames go and come from.
-    std::string rxKey;
-    std::string txKey;
-
     // How many frames may back up before the oldest are dropped. A busy
     // 500 kbit/s bus is about 4000 frames a second, so the default holds a
     // couple of seconds of one.
     uint32_t rxQueueDepth { 8192 };
-
-    // Publish received frames at all. Off for a channel that exists only to
-    // transmit, where publishing would echo a diagnostic tool's own traffic
-    // back at it.
-    bool publishRx { true };
-    // Accept frames from `txKey` and put them on the bus. Off is a stronger
-    // statement than listenOnly: nothing can even ask.
-    bool acceptTx { true };
-
-    // Write everything seen on this channel -- received and transmitted -- to a
-    // PCAN .trc file at this path, readable by PCAN-Explorer and PCAN-View.
-    // Empty records nothing.
-    //
-    // This is a tap on the channel rather than a `trc:` device because a
-    // send() only ever sees what this process transmits, and a trace is worth
-    // keeping precisely because it has both directions in it.
-    std::string recordTrcPath;
-
-    // What goes in the trace's Bus column, so several channels recorded from
-    // one bridge stay distinguishable in the files they produce.
-    uint8_t recordTrcBus { 1 };
 };
 
 struct NodeConfig

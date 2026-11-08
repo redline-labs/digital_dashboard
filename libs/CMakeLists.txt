@@ -46,6 +46,9 @@ add_subdirectory(can_motec)
 # Reads and writes PCAN .trc traces, and turns one into a replay channel. After
 # `can`: it uses can::dlc_to_length and implements can::Backend.
 add_subdirectory(can_trc)
+# A can::Channel onto zenoh topics and back. After can_trc (its recording tap)
+# and pub_sub; before can_backends, which offers zenoh: behind a flag.
+add_subdirectory(can_zenoh)
 add_subdirectory(can_backends)
 # The Trimble GSOF protocol: framing, records, command building. Pure bytes,
 # no I/O -- `bd992` sits above it with the sockets. Independent of everything

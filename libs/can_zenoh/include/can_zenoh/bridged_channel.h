@@ -1,11 +1,10 @@
-#ifndef CAN_BRIDGE_BRIDGED_CHANNEL_H_
-#define CAN_BRIDGE_BRIDGED_CHANNEL_H_
+#ifndef CAN_ZENOH_BRIDGED_CHANNEL_H_
+#define CAN_ZENOH_BRIDGED_CHANNEL_H_
 
-#include "node_config.h"
-#include "trc_recorder.h"
-#include "tx_queue.h"
+#include "can_zenoh/bridge_config.h"
+#include "can_zenoh/trc_recorder.h"
+#include "can_zenoh/tx_queue.h"
 
-#include "can/backend.h"
 #include "can/channel.h"
 
 #include "can_bridge.capnp.h"
@@ -21,11 +20,8 @@
 #include <string>
 #include <thread>
 
-namespace can_bridge
+namespace can_zenoh
 {
-
-// How a configured channel is opened, at startup and on every reopen.
-can::OpenOptions openOptions(const ChannelConfig& config);
 
 // When to try opening a channel again: at once the first time, then after a
 // delay that doubles up to a ceiling. An adapter that is gone for an hour is
@@ -72,13 +68,13 @@ class BridgedChannel
     // busy 500 kbit/s bus, and far more than a MoTeC UTC sends in one.
     static constexpr size_t kTxQueueDepth = 1024;
 
-    BridgedChannel(ChannelConfig config, std::shared_ptr<can::Channel> channel);
+    BridgedChannel(BridgeConfig config, std::shared_ptr<can::Channel> channel);
     ~BridgedChannel();
 
     BridgedChannel(const BridgedChannel&) = delete;
     BridgedChannel& operator=(const BridgedChannel&) = delete;
 
-    const ChannelConfig& config() const { return config_; }
+    const BridgeConfig& config() const { return config_; }
     std::shared_ptr<can::Channel> channel() const;
 
     void start();
@@ -107,7 +103,7 @@ class BridgedChannel
     void publish(const helpers::CanFrame& frame);
     void note_error(std::string message);
 
-    ChannelConfig config_;
+    BridgeConfig config_;
 
     // Read by the tx subscriber's thread and the pump, replaced by reattach().
     mutable std::mutex channelMutex_;
@@ -131,17 +127,6 @@ class BridgedChannel
     std::string lastError_;
 };
 
-// A channel that could not be opened. Kept rather than dropped, so the status
-// topic reports what is wrong with it instead of it simply being absent -- "the
-// adapter is held by the kernel driver" is a far more useful thing to publish
-// than nothing at all -- and so it can be opened when the adapter turns up.
-struct FailedChannel
-{
-    ChannelConfig config;
-    std::string error;
-    ReopenBackoff reopen;
-};
+}  // namespace can_zenoh
 
-}  // namespace can_bridge
-
-#endif  // CAN_BRIDGE_BRIDGED_CHANNEL_H_
+#endif  // CAN_ZENOH_BRIDGED_CHANNEL_H_

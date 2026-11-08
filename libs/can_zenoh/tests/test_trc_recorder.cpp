@@ -6,7 +6,7 @@
 // frame put in comes out the same frame, and the reader is the thing that will
 // actually be used to check a recording later.
 
-#include "trc_recorder.h"
+#include "can_zenoh/trc_recorder.h"
 
 #include "can_trc/trc.h"
 
@@ -18,7 +18,7 @@
 #include <thread>
 #include <vector>
 
-using namespace can_bridge;
+using namespace can_zenoh;
 
 namespace
 {

@@ -17,4 +17,5 @@ target_link_libraries(can_backends
         can_pcan
         can_socketcan
         can_trc
+        can_zenoh
 )

@@ -5,6 +5,7 @@
 #include "can/virtual_backend.h"
 #include "can_motec/utc_backend.h"
 #include "can_socketcan/socketcan_backend.h"
+#include "can_zenoh/zenoh_backend.h"
 
 namespace can
 {
@@ -35,6 +36,10 @@ Registry make_default_registry(const DefaultRegistryOptions& options)
     if (options.includeTrc)
     {
         registry.add(trc::make_trc_backend(options.trc));
+    }
+    if (options.includeZenoh)
+    {
+        registry.add(can_zenoh::make_zenoh_backend());
     }
 
     return registry;

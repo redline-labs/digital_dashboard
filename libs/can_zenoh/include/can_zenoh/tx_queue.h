@@ -1,5 +1,5 @@
-#ifndef CAN_BRIDGE_TX_QUEUE_H_
-#define CAN_BRIDGE_TX_QUEUE_H_
+#ifndef CAN_ZENOH_TX_QUEUE_H_
+#define CAN_ZENOH_TX_QUEUE_H_
 
 #include "helpers/can_frame.h"
 
@@ -9,7 +9,7 @@
 #include <mutex>
 #include <optional>
 
-namespace can_bridge
+namespace can_zenoh
 {
 
 // Frames waiting to be sent, between the zenoh callback that receives them and
@@ -99,6 +99,6 @@ class TxQueue
     bool closed_{false};
 };
 
-}  // namespace can_bridge
+}  // namespace can_zenoh
 
-#endif  // CAN_BRIDGE_TX_QUEUE_H_
+#endif  // CAN_ZENOH_TX_QUEUE_H_

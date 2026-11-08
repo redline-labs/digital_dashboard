@@ -29,6 +29,10 @@ struct DefaultRegistryOptions
     bool includeSocketCan { true };
     bool includeVirtual { true };
     bool includeTrc { true };
+    // `zenoh:<prefix>`, a bus some other process bridges onto zenoh. Off by
+    // default: it is how a tool reaches a remote bus, and a bridge offering it
+    // could be configured to bridge its own topics back onto themselves.
+    bool includeZenoh { false };
 };
 
 Registry make_default_registry(const DefaultRegistryOptions& options = {});

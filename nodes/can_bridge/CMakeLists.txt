@@ -4,9 +4,8 @@ project(can_bridge)
 
 add_executable(can_bridge
     main.cpp
-    bridged_channel.cpp
+    hardware_channel.cpp
     node_config.cpp
-    trc_recorder.cpp
 )
 
 target_link_libraries(can_bridge
@@ -18,6 +17,7 @@ target_link_libraries(can_bridge
         can
         can_backends
         can_trc
+        can_zenoh
         zenoh_pub_sub
         spdlog::spdlog
         cxxopts::cxxopts
@@ -39,76 +39,20 @@ target_link_libraries(can_bridge_test_config
     PRIVATE
     node_config
         can
+        can_zenoh
         spdlog::spdlog
         yaml-cpp::yaml-cpp
 )
 
 add_project_test(TARGET can_bridge_test_config LABELS can_bridge unit)
 
-# A channel whose hardware goes away is reported lost, and one opened in its
-# place carries traffic on the same topic. Over the virtual bus and a real
-# zenoh session.
-add_executable(can_bridge_test_reconnect
-    test_reconnect.cpp
-    bridged_channel.cpp
-    trc_recorder.cpp
-)
-target_link_libraries(can_bridge_test_reconnect PRIVATE
-    can
-    can_trc
-    zenoh_pub_sub
-    schemas
-    capnp
-    helpers
-    spdlog::spdlog
-)
-add_project_test(TARGET can_bridge_test_reconnect LABELS can_bridge net)
-
-# The transmit queue between the tx topic and the adapter.
-add_executable(can_bridge_test_tx_queue test_tx_queue.cpp)
-target_link_libraries(can_bridge_test_tx_queue PRIVATE helpers)
-add_project_test(TARGET can_bridge_test_tx_queue LABELS can_bridge unit)
-
-# The tx topic's callback queues rather than waiting on a blocked send().
-add_executable(can_bridge_test_transmit
-    test_transmit.cpp
-    bridged_channel.cpp
-    trc_recorder.cpp
-)
-target_link_libraries(can_bridge_test_transmit PRIVATE
-    can
-    can_trc
-    zenoh_pub_sub
-    schemas
-    capnp
-    helpers
-    spdlog::spdlog
-)
-add_project_test(TARGET can_bridge_test_transmit LABELS can_bridge net)
+# The channel plumbing (bridging, recording, the transmit queue) is libs/can_zenoh
+# and is tested there.
 
 # The health check each channel's status turns into: every bus state named.
 add_executable(can_bridge_test_channel_health test_channel_health.cpp)
 target_link_libraries(can_bridge_test_channel_health PRIVATE node_health schemas capnp)
 add_project_test(TARGET can_bridge_test_channel_health LABELS can_bridge unit)
-
-# The recording tap. What is pinned here is that both directions land in the
-# file with the right direction and in the recorded order, that a full queue
-# drops and counts rather than blocking the thread that feeds it, and that
-# hardware timestamps -- whose epoch differs per backend -- still produce
-# sensible offsets.
-add_executable(can_bridge_test_recorder
-    test_trc_recorder.cpp
-    trc_recorder.cpp
-)
-
-target_link_libraries(can_bridge_test_recorder
-    PRIVATE
-        can_trc
-        helpers
-        spdlog::spdlog
-)
-
-add_project_test(TARGET can_bridge_test_recorder LABELS can_bridge unit)
 
 # SHIPPED. See cmake/ProjectInstall.cmake for what that means and what it excludes.
 redline_install(TARGET can_bridge COMPONENT nodes)

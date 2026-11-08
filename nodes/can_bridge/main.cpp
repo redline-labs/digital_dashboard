@@ -14,10 +14,10 @@
 // every timestamp it read. `record_trc:` on any channel is the same thing in
 // reverse, writing a trace PCAN-Explorer can open.
 //
-// Shape: one thread per channel doing a blocking receive and publishing what it
-// gets; zenoh subscriber callbacks calling send() directly. That is why
-// can::Channel promises send() is safe while another thread is in receive() --
-// this is the caller that needs it, and nothing needs more.
+// Shape: per channel, one thread doing a blocking receive and publishing what
+// it gets, and one sending what the tx topic queued (libs/can_zenoh). That is
+// why can::Channel promises send() is safe while another thread is in
+// receive() -- this is the caller that needs it, and nothing needs more.
 //
 // A channel that fails to open does not take the others down. Two buses on one
 // vehicle should not both stop because one adapter was unplugged, and a bridge
@@ -25,10 +25,9 @@
 
 #include "cli/interrupt.h"
 #include "cli/node_options.h"
-#include "bridged_channel.h"
+#include "hardware_channel.h"
 #include "channel_health.h"
 #include "node_config.h"
-#include "trc_recorder.h"
 
 #include "can/backend.h"
 #include "can/channel.h"
@@ -280,7 +279,7 @@ int main(int argc, char** argv)
     auto registry = can::make_default_registry(registryOptions);
 
     // --- open what was asked for --------------------------------------------
-    std::vector<std::unique_ptr<can_bridge::BridgedChannel>> channels;
+    std::vector<std::unique_ptr<can_bridge::HardwareChannel>> channels;
     std::vector<can_bridge::FailedChannel> failed;
 
     for (const auto& channelConfig : config.channels)
@@ -307,7 +306,7 @@ int main(int argc, char** argv)
         SPDLOG_INFO("[{}]   tx <- '{}'{}", channelConfig.name, channelConfig.txKey,
                     channelConfig.acceptTx ? "" : " (not accepted)");
 
-        channels.push_back(std::make_unique<can_bridge::BridgedChannel>(channelConfig, *opened));
+        channels.push_back(std::make_unique<can_bridge::HardwareChannel>(channelConfig, *opened));
     }
 
     if (channels.empty())
@@ -381,7 +380,7 @@ int main(int argc, char** argv)
             const std::lock_guard<std::mutex> lock(stateMutex);
             const std::string name = request.getChannel();
 
-            can_bridge::BridgedChannel* target = nullptr;
+            can_bridge::HardwareChannel* target = nullptr;
             for (auto& channel : channels)
             {
                 if (channel->config().name == name)
@@ -447,7 +446,7 @@ int main(int argc, char** argv)
                 continue;
             }
             auto opened = registry.open(channel->config().device,
-                                        can_bridge::openOptions(channel->config()));
+                                        can_bridge::openOptions(channel->hardware()));
             if (!opened.has_value())
             {
                 SPDLOG_DEBUG("[{}] still cannot open {}: {}", channel->config().name,
@@ -475,7 +474,7 @@ int main(int argc, char** argv)
                 continue;
             }
             SPDLOG_INFO("[{}] {} opened at last", it->config.name, it->config.device);
-            auto bridged = std::make_unique<can_bridge::BridgedChannel>(it->config, *opened);
+            auto bridged = std::make_unique<can_bridge::HardwareChannel>(it->config, *opened);
             bridged->start();
             channels.push_back(std::move(bridged));
             it = failed.erase(it);

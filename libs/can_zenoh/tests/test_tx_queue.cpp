@@ -2,7 +2,7 @@
 // never blocks, a full queue refuses the newest frame and counts it, order is
 // kept, and close() releases the sender.
 
-#include "tx_queue.h"
+#include "can_zenoh/tx_queue.h"
 
 #include <chrono>
 #include <cstdio>
@@ -35,7 +35,7 @@ helpers::CanFrame frameWithId(uint32_t id)
 
 void overflowRefusesTheNewest()
 {
-    can_bridge::TxQueue queue(3);
+    can_zenoh::TxQueue queue(3);
     for (uint32_t id = 1; id <= 5; ++id)
     {
         const bool queued = queue.push(frameWithId(id));
@@ -55,7 +55,7 @@ void overflowRefusesTheNewest()
 
 void closeReleasesAWaitingSender()
 {
-    can_bridge::TxQueue queue(4);
+    can_zenoh::TxQueue queue(4);
     auto waiting = std::async(std::launch::async, [&] { return queue.pop(); });
     expect(waiting.wait_for(50ms) == std::future_status::timeout, "pop waits on an empty queue");
 

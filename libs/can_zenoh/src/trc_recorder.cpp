@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include "trc_recorder.h"
+#include "can_zenoh/trc_recorder.h"
 
 #include "helpers/rate_gate.h"
 
@@ -9,7 +9,7 @@
 #include <chrono>
 #include <utility>
 
-namespace can_bridge
+namespace can_zenoh
 {
 
 namespace
@@ -43,11 +43,12 @@ can::trc::RecordKind kind_for(const helpers::CanFrame& frame)
 } // namespace
 
 can::Result<std::unique_ptr<TrcRecorder>> TrcRecorder::create(const std::string& path, uint8_t bus,
-                                                              const can::trc::BusInfo& busInfo)
+                                                              const can::trc::BusInfo& busInfo,
+                                                              std::string generatedBy)
 {
     can::trc::WriterOptions options;
     options.startTimeUnixUs = wall_clock_us();
-    options.generatedBy = "Redline can_bridge";
+    options.generatedBy = std::move(generatedBy);
     options.buses.push_back(busInfo);
 
     auto writer = can::trc::Writer::create(path, options);
@@ -207,4 +208,4 @@ void TrcRecorder::run()
     (void)writer_->flush();
 }
 
-} // namespace can_bridge
+} // namespace can_zenoh

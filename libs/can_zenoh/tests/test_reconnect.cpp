@@ -7,7 +7,7 @@
 // while it received nothing, and nothing ever reopened it. The virtual bus
 // stands in for the adapter: stopping its channel is the unplug.
 
-#include "bridged_channel.h"
+#include "can_zenoh/bridged_channel.h"
 
 #include "can/backend.h"
 #include "can/virtual_backend.h"
@@ -28,7 +28,7 @@ namespace
 {
 
 using namespace std::chrono_literals;
-using can_bridge::ReopenBackoff;
+using can_zenoh::ReopenBackoff;
 
 int failures = 0;
 
@@ -85,10 +85,10 @@ int main()
     can::Registry registry;
     registry.add(can::make_virtual_backend());
 
-    can_bridge::ChannelConfig config;
+    can_zenoh::BridgeConfig config;
     config.name = "test";
     config.device = "virtual:" + bus;
-    config.rxKey = "test/can_bridge/reconnect/" + std::to_string(::getpid());
+    config.rxKey = "test/can_zenoh/reconnect/" + std::to_string(::getpid());
     config.publishRx = true;
     config.acceptTx = false;
 
@@ -96,13 +96,13 @@ int main()
     pub_sub::ZenohTypedSubscriber<::CanFrame> subscriber(
         config.rxKey, [&](::CanFrame::Reader) { received.fetch_add(1); });
 
-    auto first = registry.open(config.device, can_bridge::openOptions(config));
+    auto first = registry.open(config.device, can::OpenOptions{});
     expect(first.has_value(), "opens the virtual channel");
     if (!first.has_value())
     {
         return 1;
     }
-    can_bridge::BridgedChannel bridged(config, *first);
+    can_zenoh::BridgedChannel bridged(config, *first);
     bridged.start();
     std::this_thread::sleep_for(300ms);
 
@@ -115,7 +115,7 @@ int main()
     (void)bridged.channel()->stop();
     expect(bridged.lost(), "a channel whose hardware stopped is lost");
 
-    auto second = registry.open(config.device, can_bridge::openOptions(config));
+    auto second = registry.open(config.device, can::OpenOptions{});
     expect(second.has_value(), "the channel opens again");
     if (second.has_value())
     {
