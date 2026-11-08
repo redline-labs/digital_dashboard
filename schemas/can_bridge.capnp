@@ -96,6 +96,13 @@ struct CanBridgeChannelStatus {
   # the hole is there, and worthless if you do not.
   recordedFrames @19 :UInt64;
   recordDropped @20 :UInt64;
+
+  # Frames from the tx topic waiting for the adapter, and frames refused
+  # because that queue was full. The topic's callback only queues -- a send
+  # can block on the adapter -- so a publisher outrunning the bus shows up
+  # here, not as a stalled node.
+  txQueued @21 :UInt32;
+  txQueueDropped @22 :UInt64;
 }
 
 # What every configured channel is doing. Published on a change and on a timer,

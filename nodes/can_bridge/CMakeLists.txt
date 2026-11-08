@@ -64,6 +64,28 @@ target_link_libraries(can_bridge_test_reconnect PRIVATE
 )
 add_project_test(TARGET can_bridge_test_reconnect LABELS can_bridge net)
 
+# The transmit queue between the tx topic and the adapter.
+add_executable(can_bridge_test_tx_queue test_tx_queue.cpp)
+target_link_libraries(can_bridge_test_tx_queue PRIVATE helpers)
+add_project_test(TARGET can_bridge_test_tx_queue LABELS can_bridge unit)
+
+# The tx topic's callback queues rather than waiting on a blocked send().
+add_executable(can_bridge_test_transmit
+    test_transmit.cpp
+    bridged_channel.cpp
+    trc_recorder.cpp
+)
+target_link_libraries(can_bridge_test_transmit PRIVATE
+    can
+    can_trc
+    zenoh_pub_sub
+    schemas
+    capnp
+    helpers
+    spdlog::spdlog
+)
+add_project_test(TARGET can_bridge_test_transmit LABELS can_bridge net)
+
 # The health check each channel's status turns into: every bus state named.
 add_executable(can_bridge_test_channel_health test_channel_health.cpp)
 target_link_libraries(can_bridge_test_channel_health PRIVATE node_health schemas capnp)

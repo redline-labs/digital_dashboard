@@ -3,6 +3,7 @@
 
 #include "node_config.h"
 #include "trc_recorder.h"
+#include "tx_queue.h"
 
 #include "can/backend.h"
 #include "can/channel.h"
@@ -67,6 +68,10 @@ class ReopenBackoff
 class BridgedChannel
 {
   public:
+    // Frames the tx topic may queue ahead of the adapter: about a second of a
+    // busy 500 kbit/s bus, and far more than a MoTeC UTC sends in one.
+    static constexpr size_t kTxQueueDepth = 1024;
+
     BridgedChannel(ChannelConfig config, std::shared_ptr<can::Channel> channel);
     ~BridgedChannel();
 
@@ -97,6 +102,7 @@ class BridgedChannel
     void startPump();
     void stopPump();
     void transmit(::CanFrame::Reader message);
+    void send_loop();
     void pump();
     void publish(const helpers::CanFrame& frame);
     void note_error(std::string message);
@@ -110,6 +116,10 @@ class BridgedChannel
     std::unique_ptr<pub_sub::ZenohPublisher<::CanFrame>> rxPublisher_;
     std::unique_ptr<pub_sub::ZenohTypedSubscriber<::CanFrame>> txSubscriber_;
     std::unique_ptr<TrcRecorder> recorder_;
+
+    // The tx topic's callback queues; sender_ is the only caller of send().
+    TxQueue txQueue_{kTxQueueDepth};
+    std::thread sender_;
 
     std::thread pump_;
     std::atomic<bool> pumping_{false};

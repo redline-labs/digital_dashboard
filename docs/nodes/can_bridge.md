@@ -90,10 +90,18 @@ and as a serial second; `serial=` forces the serial reading.
 | `record_trc_bus` | `1` | The trace's Bus column, `1` to `16`, so two recorded channels stay apart. |
 
 {: .warning }
-A `motec:` channel ignores `bitrate`. The UTC runs at whatever MoTeC's own
-tool last configured it for, and the protocol has no command to change or read
-it. The node warns at startup, and a mismatch presents as a bus that carries
-nothing with no error anywhere.
+A `motec:` channel takes only 1 Mbit/s, 500, 250, 125, 66.67 or 33.33 kbit/s,
+and refuses any other `bitrate` at startup. Only 1 Mbit/s has been confirmed
+on a real UTC; the others are unverified. Nothing reads the rate back, so a
+rate the device did not apply looks like a bus that carries nothing, with no
+error anywhere.
+
+Frames from the tx topic are queued and sent from a thread of their own, so
+the topic's callback never waits on the adapter. A send can take a while: a
+USB transfer, or, on a MoTeC UTC, up to a second waiting for the device to
+answer earlier transmits. The queue holds 1024 frames. When it is full the
+newest frame is refused and counted under `txQueueDropped`, and `txQueued`
+shows the current backlog. Frames still queued at shutdown are discarded.
 
 The trace recorder runs on its own thread, so neither the receive loop nor a
 zenoh callback ever waits on the disk. If it cannot keep up it drops frames
@@ -123,7 +131,7 @@ decoder nodes' job, downstream of `vehicle/<name>/rx`.
 | --- | --- | --- |
 | `vehicle/<name>/rx` | `CanFrame` | Every frame received on the channel. |
 | `vehicle/<name>/tx` | `CanFrame` | Publish here and the frame goes on the wire. Best-effort: a publisher outrunning the subscriber loses samples in zenoh, not in the driver. |
-| `vehicle/can/status` | `CanBridgeStatus` | One `CanBridgeChannelStatus` per channel: `open`, `running`, `error`, the bit rates, `state`, `rxFrames`, `txFrames`, `rxDropped`, `txDropped`, error counters where the backend has them, `recordPath`, `recordedFrames`, `recordDropped`. Republished every `status_interval_ms` so a late subscriber does not wait for something to go wrong. |
+| `vehicle/can/status` | `CanBridgeStatus` | One `CanBridgeChannelStatus` per channel: `open`, `running`, `error`, the bit rates, `state`, `rxFrames`, `txFrames`, `rxDropped`, `txDropped`, error counters where the backend has them, `recordPath`, `recordedFrames`, `recordDropped`, `txQueued`, `txQueueDropped`. Republished every `status_interval_ms` so a late subscriber does not wait for something to go wrong. |
 | `vehicle/can/set_bitrate` | service | Change a channel's bit rate at runtime, by `name`. `--set-bitrate` is the client. |
 
 ### Health

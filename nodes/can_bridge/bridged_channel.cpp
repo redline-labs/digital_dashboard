@@ -93,6 +93,8 @@ void BridgedChannel::start()
 {
     if (config_.acceptTx)
     {
+        txQueue_.reopen();
+        sender_ = std::thread([this] { send_loop(); });
         txSubscriber_ = std::make_unique<pub_sub::ZenohTypedSubscriber<::CanFrame>>(
             config_.txKey, [this](::CanFrame::Reader message) { transmit(message); });
     }
@@ -104,7 +106,14 @@ void BridgedChannel::stop()
 {
     started_ = false;
     stopPump();
+    // The subscriber first, so nothing queues behind the close. Frames still
+    // queued are discarded: this is shutdown.
     txSubscriber_.reset();
+    txQueue_.close();
+    if (sender_.joinable())
+    {
+        sender_.join();
+    }
     // After both producers are gone, so the recorder's destructor drains a
     // queue nothing is still pushing to and the trace ends where the
     // traffic did.
@@ -183,6 +192,9 @@ void BridgedChannel::fill_status(CanBridgeChannelStatus::Builder builder) const
         builder.setRecordDropped(recorder_->dropped());
     }
 
+    builder.setTxQueued(static_cast<uint32_t>(txQueue_.size())); // at most kTxQueueDepth
+    builder.setTxQueueDropped(txQueue_.dropped());
+
     std::lock_guard<std::mutex> lock(errorMutex_);
     builder.setError(lastError_);
 }
@@ -194,22 +206,44 @@ void BridgedChannel::transmit(::CanFrame::Reader message)
     // bus.
     const helpers::CanFrame frame = pub_sub::fromCapnp(message);
 
-    auto result = channel()->send(frame);
-    if (result.has_value() && recorder_)
+    // Only queued here. This is a zenoh callback, and send() can block -- a
+    // MoTeC UTC waits up to a second for answers to earlier transmits.
+    if (!txQueue_.push(frame))
     {
-        // Only what actually reached the bus. Recording a frame the
-        // adapter refused would put a message in the trace that was never
-        // on the wire, which is the one thing a trace must not do.
-        recorder_->record_tx(frame);
+        const uint64_t dropped = txQueue_.dropped();
+        // The first of a burst, then every thousandth: a publisher that
+        // outruns the bus would otherwise log once per frame.
+        if (dropped % 1000 == 1)
+        {
+            note_error("transmit queue full");
+            SPDLOG_WARN("[{}] transmit queue full ({} frames); {} dropped so far",
+                        config_.name, kTxQueueDepth, dropped);
+        }
     }
-    if (!result.has_value())
+}
+
+void BridgedChannel::send_loop()
+{
+    while (const auto next = txQueue_.pop())
     {
-        note_error(can::to_string(result.error()));
-        // Rate-limited by the fact that a broken bus produces the same
-        // message every time; logging every failure on a bus that is down
-        // would drown everything else.
-        SPDLOG_WARN("[{}] cannot transmit 0x{:X}: {}", config_.name, frame.id,
-                    result.error().message);
+        const helpers::CanFrame& frame = *next;
+        auto result = channel()->send(frame);
+        if (result.has_value() && recorder_)
+        {
+            // Only what actually reached the bus. Recording a frame the
+            // adapter refused would put a message in the trace that was never
+            // on the wire, which is the one thing a trace must not do.
+            recorder_->record_tx(frame);
+        }
+        if (!result.has_value())
+        {
+            note_error(can::to_string(result.error()));
+            // Rate-limited by the fact that a broken bus produces the same
+            // message every time; logging every failure on a bus that is down
+            // would drown everything else.
+            SPDLOG_WARN("[{}] cannot transmit 0x{:X}: {}", config_.name, frame.id,
+                        result.error().message);
+        }
     }
 }
 
