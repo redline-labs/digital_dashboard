@@ -123,7 +123,15 @@ discovery seeing only live traffic, and what `accepted: false` and
   exists rather than a Lua profile beside a C++ one.
 - **`tools/` runs on the workstation and never ships; `nodes/` runs on the
   vehicle.** The boundary is what keeps a tool that holds tens of gigabytes of
-  scratch state out of a deployment manifest.
+  scratch state out of a deployment manifest. `sims/` is workstation-only too.
+- **A simulator is the device, not a sim protocol.** `sims/` runs the device's
+  own firmware and puts it on the topics, in the schema, that the real device's
+  bridge would: `pdm32_sim serve` publishes through can_zenoh's
+  `BridgedChannel`, the same code `can_bridge` uses, so nothing downstream can
+  tell. Do not give a simulator a socket or topic format of its own. The
+  firmware it runs is the vendor's and never enters the tree; neither does what
+  `pdm_flash_dump` reads off a unit (`*.hex`, `*.s19`, `dumps/` are ignored).
+  Its tests skip without the image (`PDM_FIRMWARE_HEX`). See docs/sims/.
 - **Where samples come from is one interface.** `scope::DataSource` has two
   implementations -- the live bus and a recording -- and nothing above it knows
   which it has. Swapping between them (`ScopeSession::setSource()`) has ONE
@@ -464,6 +472,9 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     bag (MCAP record/replay),
                     can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
                   (CAN channels) -- docs/libs/can_motec.md for the MoTeC one,
+                    can_zenoh (a channel onto zenoh topics, and zenoh: back),
+                    emu + hc08 + gz60 (what emulators are built from: wiring,
+                    the CPU08 core and its JIT, the GZ60's modules), mctest,
                     byte_stream (the stream, TCP, replay and backoff every
                     device transport shares),
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),
@@ -481,6 +492,9 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     and batch smoothers) + imu_preint + vehicle_estimator (the
                     estimation problem, no bus) + calibration_store (what
                     it learned, kept in SQLite) -- docs/design/state-estimation.md
+sims/               emulators standing in for hardware, WORKSTATION ONLY:
+  pdm32/            a MoTeC PDM32 (its firmware on libs/gz60), pdm32_sim
+                    serve|run|images|disasm -- docs/sims/pdm32.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus map_server (a file rather than hardware) and the two
                     tools: inspect (look at the bus) and bag (record and replay
@@ -494,7 +508,8 @@ tools/              WORKSTATION ONLY, never shipped: map_build (OSM PBF in,
                     estimator_sim + estimator_offline (simulated drives, and
                     fixed-lag vs whole-drive estimates over a bag), csym_oracle
                     (SymForce reference vectors, not a build dependency)
-                    and mcp_dashboard (the MCP server, Python, uv)
+                    pdm_flash_dump (read a PDM32 over any can:: channel,
+                    read-only) and mcp_dashboard (the MCP server, Python, uv)
 docs/               the public site, one section per audience -- see
                     docs/developing/writing-docs.md before adding a page
 ```
