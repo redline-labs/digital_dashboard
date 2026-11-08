@@ -86,6 +86,11 @@ ui_screenshot(target="#speedo")        # look at it
 input_click(target="#speedo", x=125, y=125)
 ```
 
+The simulators are launched the same way and driven with the `sim_*` tools;
+[pdm32_sim](../sims/pdm32.html#driving-it-from-an-agent) has the details. A
+simulator answers `app_logs`, `app_info`, `app_call` and `app_methods`, but is
+never the app a call with no `app=` means.
+
 **At most one `dashboard` and one `editor` at a time.** Running two dashboards is
 not supported: they share a zenoh bus, so a second would observe samples injected
 at the first. `app_launch` on a type that is already running replaces it.

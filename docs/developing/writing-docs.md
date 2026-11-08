@@ -21,6 +21,7 @@ three of them.
 |---|---|---|
 | `apps/` | someone running a GUI program | running it, its options, its configuration, what it shows, troubleshooting |
 | `nodes/` | someone putting hardware on the bus | what it bridges, running it with and without the hardware, topics and services, what fails silently |
+| `sims/` | someone developing against hardware that is not on the bench | what it stands in for, running it, what is real and what is synthetic, driving it from an agent |
 | `tools/` | someone building data on a workstation | the verbs, the pipeline, checking the output |
 | `libs/` | a developer coding against the tree | what it is and is not, public headers, using it, behaviour worth knowing, tests |
 | `reference/` | anyone looking something up | tables: environment, licences, bus conventions |

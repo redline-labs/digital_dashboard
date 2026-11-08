@@ -41,10 +41,19 @@ the debugging loop. This page is about linking and extending the library.
 | `agent_control/capture.h` | `captureWidget()` and `CaptureOptions`: the PNG plus the metadata that fixes its coordinates. |
 | `agent_control/input.h` | `sendClick`, `sendDrag`, `sendDrop`, `sendKeySequence`, `sendText`, all widget-local. |
 | `agent_control/gui_thread.h` | `callOnGuiThread()` with a timeout, and `settleEventLoop()`. |
-| `agent_control/log_sink.h` | `RingSink`, `installLogCapture()`, `logRing()`. |
+| `agent_control/log_sink.h` | `installLogCapture()`: the ring below plus Qt's own diagnostics. |
+| `agent_control/log_ring.h` | `RingSink`, `installLogRing()`, `logRing()`, and `queryLogs()`, which is `app.logs`. No Qt. |
 | `agent_control/control_socket.h` | `ControlSocket`: the accept loop and per-client threads. Never touches Qt. |
+| `agent_control/dispatcher.h` | `Dispatcher`: the JSON-RPC envelope and the method table, with an `Invoker` that decides which thread a handler runs on. No Qt. |
+| `agent_control/mcp_option.h` | `addMcpOption`, `mcpSocketPath`, `rejectUnmatched`, `announceReady`. No Qt. |
 
 ## Using it
+
+A process without Qt links `agent_control_core` instead: the socket, the
+`Dispatcher`, the error codes, typed parameters, the log ring and the `--mcp`
+option. [pdm32_sim](../sims/pdm32.html) serves its methods that way, hopping
+each call to its simulation thread through the `Dispatcher`'s invoker as
+`AgentServer` hops to the GUI thread.
 
 Link the CMake target `agent_control`. The dashboard's `main()` builds the
 server, registers the shared methods, adds its own, and starts it:
@@ -98,7 +107,7 @@ with no cursor. The monotonic `seq` is the point, so `since_seq` returns only
 what is new and eviction is reported as `dropped`. `installLogCapture()` also
 routes Qt's own diagnostics into spdlog under the logger `qt`; a screenshot
 that comes back black often has a QPA line behind it. spdlog is a PUBLIC link
-dependency because `log_sink.h` exposes a sink type.
+dependency because `log_ring.h` exposes a sink type.
 
 The `zenoh.*` methods go through Cap'n Proto's dynamic API and the generated
 schema registry, so a schema added to `schemas/` works with no change here.

@@ -15,8 +15,8 @@ split costs nothing and keeps the dependency arrows pointing one way.
 
 There is no logic of its own here and nothing that opens hardware. It links
 `can`, [can_motec](can_motec.html), [can_pcan](can_pcan.html),
-[can_socketcan](can_socketcan.html) and [can_trc](can_trc.html), and a caller
-that links this gets all of them. The caller is
+[can_socketcan](can_socketcan.html), [can_trc](can_trc.html) and
+[can_zenoh](can_zenoh.html), and a caller that links this gets all of them. The caller is
 [can_bridge](../nodes/can_bridge.html).
 
 ## Public headers
@@ -46,6 +46,11 @@ Backends are registered in the order PCAN, MoTeC, SocketCAN, virtual, trace.
 The order decides only what `Registry::enumerate()` lists first, so real
 hardware comes before the loopback and `can_bridge --list` puts the thing that
 was plugged in at the top.
+
+`zenoh:` is the exception to "everything by default": `includeZenoh` is off
+unless a caller sets it, because a bridge offering it could be configured to
+bridge its own topics back onto themselves. Tools that reach a remote bus, such
+as [pdm_flash_dump](../tools/pdm_flash_dump.html), turn it on.
 
 The `include*` flags leave a backend out entirely, which is what a test wants
 for deterministic behaviour on a machine that happens to have a dongle plugged

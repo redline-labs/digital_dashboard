@@ -21,10 +21,10 @@ Every library is listed; the ones without a page yet say so.
 | `cli` | `cli` | Verb dispatch for the multi-verb tools: global options, exit codes, results on stdout. | [cli](cli.html) |
 | `helpers` | `helpers` | Qt-free odds and ends: hex, colour, unit conversion, a rate gate, the FFmpeg log bridge. | [helpers](helpers.html) |
 | `qt_helpers` | `qt_helpers` | The Qt-using sibling: a paint-caching widget base, colour conversion, resource fonts. | [qt_helpers](qt_helpers.html) |
-| `agent_control` | `agent_control` | The `--mcp` control socket embedded in every GUI app: methods, screenshots, input, the widget locator. | [agent_control](agent_control.html) |
+| `agent_control` | `agent_control`, `agent_control_core` | The `--mcp` control socket embedded in every GUI app: methods, screenshots, input, the widget locator. `agent_control_core` is the part without Qt, which the simulators serve. | [agent_control](agent_control.html) |
 | `dashboard_widgets` | `dashboard_widgets` | Every dashboard widget, the widget table, the layout config and its loader, the factory, and the `widget.*` agent methods; shared by the dashboard and the editor. | [dashboard_widgets](dashboard_widgets.html) |
 | `node_health` | `node_health` | The health a node publishes and the monitor that reads every node at once; what `inspect health` prints. | [node_health](node_health.html) |
-| `node_config` | `node_config` | The leaf readers every node's hand-written YAML parser shares: a failure-accumulating `Context`, range-checked `readUint`, `readString`/`readBool`/`readNumber`, and `checkTopicKey`. | none yet |
+| `node_config` | `node_config` | The leaf readers every node's hand-written YAML parser shares: a failure-accumulating `Context`, range-checked `readUint`, `readString`/`readBool`/`readNumber`, `checkTopicKey` and `rejectUnknownKeys`. | none yet |
 | `bag` | `bag` | Recording and replaying the bus as MCAP. | [bag](bag.html) |
 
 ## CAN
@@ -36,9 +36,21 @@ Every library is listed; the ones without a page yet say so.
 | `can_socketcan` | `can_socketcan` | The kernel's CAN stack. Linux at runtime, built everywhere. | [can_socketcan](can_socketcan.html) |
 | `can_motec` | `can_motec` | The MoTeC UTC over libusb, and the network gateways that speak the same command envelope. | [can_motec](can_motec.html) |
 | `can_trc` | `can_trc` | PCAN `.trc` traces, read and written; a trace as a replay channel. | [can_trc](can_trc.html) |
+| `can_zenoh` | `can_zenoh` | A `can::Channel` onto zenoh topics (`BridgedChannel`, which `can_bridge` and the simulators use), and `zenoh:`, a bridged bus as a channel. | [can_zenoh](can_zenoh.html) |
 | `can_backends` | `can_backends` | Assembles the backends into one registry so `can` need not know they exist. | [can_backends](can_backends.html) |
-| `dbc_parser` | `dbc_parser` | DBC files parsed, and typed decoders generated from them at build time. | [dbc_parser](dbc_parser.html) |
+| `dbc_parser` | `dbc_parser` | DBC files parsed, typed decoders generated from them at build time, and decoding at run time from a parsed file. | [dbc_parser](dbc_parser.html) |
 | `canopen` | `canopen` | EDS parsing, SDO, PDO, NMT and LSS, a virtual bus, and code generation from an EDS. | [canopen](canopen.html) |
+
+## Emulation
+
+What the simulators under `sims/` are built from.
+
+| Library | Target | What it is | Page |
+|---|---|---|---|
+| `emu` | `emu` | Simulated time, nets, interrupt lines, a CAN bus between simulated controllers, snapshots, model-gap warnings. Header-only. | [emu](emu.html) |
+| `hc08` | `hc08` | The CPU08 core: instruction set, machine, S-records, and interpreter, block and JIT engines. | [hc08](hc08.html) |
+| `gz60` | `gz60` | The MC68HC908GZ60's modules around the core, MSCAN included. | [gz60](gz60.html) |
+| `mctest` | `mctest` | `TEST()`/`CHECK()` and a runner, for test programs with many small cases. Header-only. | none yet |
 
 ## Devices
 

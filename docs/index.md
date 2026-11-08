@@ -17,6 +17,7 @@ This site is organised by who is reading it.
 | [Getting started](getting-started/) | anyone building from source | the build recipe and a demo layout |
 | [Apps](apps/) | people running the GUI programs | [dashboard](apps/dashboard/), [editor](apps/), [scope](apps/scope.html), [switchboard](apps/switchboard.html) |
 | [Nodes](nodes/) | people putting hardware on the bus | the table of every node and what it needs |
+| [Simulators](sims/) | people developing against hardware that is not on the bench | [pdm32_sim](sims/pdm32.html) |
 | [Tools](tools/) | people building map data on a workstation | [map_build](tools/map_build.html) |
 | [Libraries](libs/) | developers coding against the tree | the grouped index and each library's page |
 | [Reference](reference/) | lookups | [runtime environment](reference/environment.html), third-party licences |

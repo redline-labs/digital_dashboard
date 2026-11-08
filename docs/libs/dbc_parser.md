@@ -30,6 +30,7 @@ a half-understood DBC produces a decoder that is confidently wrong.
 | `dbc_parser/dbc_parser.h` | `Parser`: `parse()` returns `optional<Database>`, `diagnostics()` says why not; `isUsableIdentifier`. |
 | `dbc_parser/dbc_lexer.h` | `Lexer`, `Token`, `TokenKind`; positions recorded at the character itself. |
 | `dbc_parser/diagnostic.h` | `Diagnostic`, `Severity` and the `Diagnostics` collector, so one run reports everything wrong with a file. |
+| `dbc_parser/decode.h` | `rawBits`, `decodeSignal`, `decodeMessage`, `findMessage`, `findMessageWithSignal`: decoding at run time from a parsed `Database`. |
 | `dbc_parser/generate_h.h` | `generate_sources` (files in memory, no filesystem), `write_sources`, and the individual emitters. |
 
 ## Using it
@@ -86,6 +87,14 @@ directly registered handler for the same message. A multiplexed message has
 two handler kinds: `on_X` fires once per complete batch and
 `on_X_each_frame` once per group, for a device that sends some groups
 conditionally. `decode()` and `encode()` are usable in constant expressions.
+
+A program that learns its DBC only when it runs decodes through
+`dbc_parser/decode.h` instead: `decodeMessage()` walks a parsed `Message`'s
+signals over a payload, with the same multiplex gating, and `findMessage()` and
+`findMessageWithSignal()` look one up. A signal that reaches past a short payload
+is left out rather than read as padding. [pdm32_sim](../sims/pdm32.html) decodes
+its data stream this way. It is held to the same cantools goldens as the
+generated code.
 
 ### Signal types
 

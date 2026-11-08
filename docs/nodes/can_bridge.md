@@ -194,6 +194,11 @@ repository: `mock_data/data/pdm32_log.trc` (a MoTeC PDM32, 24156 frames) and
 `virtual:` channel is a loopback with nothing behind it, for exercising the
 node itself.
 
+For a PDM that answers rather than a recording, [pdm32_sim](../sims/pdm32.html)
+runs the PDM32's firmware and publishes its bus on the same topics, without
+`can_bridge` at all: both put a channel on the bus through the same
+[can_zenoh](../libs/can_zenoh.html) bridge.
+
 The MoTeC envelope also runs over UDP, which is how MoTeC's network gateways
 speak and how that backend was first brought up:
 
