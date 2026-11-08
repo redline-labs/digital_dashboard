@@ -57,6 +57,20 @@ target_link_libraries(dbc_parser_test_generated_api
 
 add_project_test(TARGET dbc_parser_test_generated_api LABELS dbc_parser unit)
 
+# The run-time decoder against the same goldens, reading the DBCs themselves,
+# plus the short and unclaimed-multiplex payloads the goldens cannot show.
+add_executable(dbc_parser_test_runtime_decode
+    test_runtime_decode.cpp
+)
+target_include_directories(dbc_parser_test_runtime_decode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(dbc_parser_test_runtime_decode PRIVATE DBC_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dbcs")
+target_link_libraries(dbc_parser_test_runtime_decode
+    PRIVATE
+    dbc::parser
+    helpers
+)
+add_project_test(TARGET dbc_parser_test_runtime_decode LABELS dbc_parser unit)
+
 # Bad input, and what the parser must say about it. Parser only, embedded
 # strings, no files.
 add_executable(dbc_parser_test_malformed

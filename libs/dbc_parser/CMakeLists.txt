@@ -10,6 +10,9 @@ add_library(dbc_parser
     src/ast.cpp
     src/dbc_lexer.cpp
     src/dbc_parser.cpp
+    # Decoding from a parsed Database, for a program that learns its DBC at
+    # run time. Nodes use the generated code.
+    src/decode.cpp
 )
 
 target_include_directories(dbc_parser
