@@ -8,6 +8,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <string_view>
@@ -21,6 +22,36 @@ namespace can::motec
 namespace
 {
 
+// The Mode command's bit-rate index for `bitrate`, or why there is none.
+Result<uint8_t> resolve_bitrate(const ChannelId& id, const Bitrate& bitrate)
+{
+    if (bitrate.fd())
+    {
+        return unsupported(fmt::format(
+            "'{}' asks for CAN FD; a MoTeC UTC is a classic CAN device. Remove the data bit "
+            "rate from its configuration",
+            id.toString()));
+    }
+    const auto index = bitrate_index(bitrate.nominalBps);
+    if (!index.has_value())
+    {
+        return unsupported(fmt::format(
+            "'{}' asks for {}; a MoTeC UTC runs at 1 Mbit/s, 500, 250, 125, 66.67 or 33.33 "
+            "kbit/s only",
+            id.toString(), bitrate.toString()));
+    }
+    // The sample point is the device's choice: the protocol has no field for it.
+    return *index;
+}
+
+// Transmits handed to the device and not yet answered. send() waits while this
+// many are outstanding: the device takes only a few records before its buffer
+// is full (0x20), and writing faster than it drains left a USB write stuck
+// part way through a frame and the device latched -- 0x21 to everything, Opens
+// on the management tag included -- until power-cycled. The answer, not the
+// USB write completing, is what says the device has taken the frame.
+constexpr unsigned kTxWindow = 2;
+
 // The receive path is one thread doing a blocking read and pushing what it
 // gets into a queue, exactly as the PCAN backend does. What differs is that
 // this device also answers commands on the same stream, so the reader has to
@@ -30,13 +61,14 @@ class MotecChannel : public Channel
 {
 public:
     MotecChannel(ChannelId id, std::shared_ptr<Transport> transport, const OpenOptions& options,
-                 const MotecOptions& motecOptions, uint8_t busHandle)
+                 const MotecOptions& motecOptions, uint8_t busHandle, uint8_t nextReqid)
         : id_(std::move(id))
         , transport_(std::move(transport))
         , options_(motecOptions)
         , bitrate_(options.bitrate)
         , queueDepth_(options.rxQueueDepth)
         , busHandle_(busHandle)
+        , nextReqid_(nextReqid)
     {
     }
 
@@ -47,15 +79,36 @@ public:
 
     Result<void> set_bitrate(const Bitrate& bitrate) override
     {
-        // Refusing rather than accepting-and-ignoring. The register map behind
-        // the Set command is unknown, so the only honest answers are this one
-        // and a guess that silently leaves the bus at the wrong speed -- which
-        // presents as a dead bus with no error anywhere.
-        return unsupported(fmt::format(
-            "a MoTeC UTC's bit rate cannot be set over this protocol -- the Set command's "
-            "register map is not known. The device runs at whatever MoTeC's own tool last "
-            "configured it for; set it to {} there. See docs/libs/can_motec.md",
-            bitrate.toString()));
+        auto index = resolve_bitrate(id_, bitrate);
+        if (!index.has_value())
+        {
+            return std::unexpected(index.error());
+        }
+        if (bitrate == bitrate_)
+        {
+            return {};
+        }
+
+        // The rate travels in the Mode command, which the device takes once
+        // per session. So a change is a new session -- Open, Version, Mode --
+        // and the stream is subscribed again after it.
+        const bool wasRunning = running_;
+        stop_reader();
+        running_ = false;
+
+        auto session = handshake(*transport_, options_, *index, nextReqid_);
+        if (!session.has_value())
+        {
+            return std::unexpected(session.error());
+        }
+        busHandle_ = session->busHandle;
+        bitrate_ = bitrate;
+
+        if (wasRunning)
+        {
+            return start();
+        }
+        return {};
     }
 
     Bitrate bitrate() const override { return bitrate_; }
@@ -82,6 +135,10 @@ public:
         {
             return {};
         }
+        if (lost_)
+        {
+            return not_found(fmt::format("{}: {}", id_.toString(), lostReason_));
+        }
 
         // One subscribe, ever. The device then pushes data frames on its own
         // request-id counter roughly every 255 ms and never asks for anything
@@ -106,7 +163,7 @@ public:
         return {};
     }
 
-    bool running() const override { return running_; }
+    bool running() const override { return running_ && !lost_; }
 
     Result<void> send(const helpers::CanFrame& frame) override
     {
@@ -118,19 +175,45 @@ public:
             return std::unexpected(record.error());
         }
 
+        {
+            std::unique_lock<std::mutex> lock(txMutex_);
+            const bool room = txAnswered_.wait_for(
+                lock, std::chrono::milliseconds(options_.txAnswerTimeoutMs),
+                [this] { return txInFlight_ < kTxWindow || lost_; });
+            if (lost_)
+            {
+                return not_found(fmt::format("{}: {}", id_.toString(), lostReason_));
+            }
+            if (!room)
+            {
+                // An answer lost on the way back must not stall every later
+                // send, so the window starts over.
+                txInFlight_ = 0;
+                std::lock_guard<std::mutex> stats(statsMutex_);
+                statistics_.txDropped++;
+                return io_error(fmt::format("{}: the device has not answered a transmit for {} ms",
+                                            id_.toString(), options_.txAnswerTimeoutMs));
+            }
+            ++txInFlight_;
+        }
+
         const std::array<Record, 1> records { *record };
         auto sent = transport_->send(encode_frame(make_tx(busHandle_, next_reqid(), records)));
         if (!sent.has_value())
         {
+            {
+                std::lock_guard<std::mutex> lock(txMutex_);
+                --txInFlight_;
+            }
             std::lock_guard<std::mutex> lock(statsMutex_);
             statistics_.txDropped++;
             return sent;
         }
 
         // Counted as transmitted here rather than when the acknowledgement
-        // arrives, because the caller's send() has to return without waiting
-        // for a USB round trip. The reader corrects the count if the device
-        // says it accepted fewer bytes than were offered.
+        // arrives, so a caller sending a burst is not serialised on a USB
+        // round trip beyond the window. The reader corrects the count if the
+        // device says it accepted fewer bytes than were offered.
         std::lock_guard<std::mutex> lock(statsMutex_);
         statistics_.txFrames++;
         statistics_.txBytes += frame.len;
@@ -147,7 +230,15 @@ public:
         std::unique_lock<std::mutex> lock(queueMutex_);
         if (queue_.empty())
         {
-            queueReady_.wait_for(lock, timeout, [this] { return !queue_.empty() || !pumping_; });
+            queueReady_.wait_for(lock, timeout,
+                                 [this] { return !queue_.empty() || !pumping_ || lost_; });
+        }
+        // What arrived before the link went is still handed over; after that
+        // the caller is told, so it can reopen rather than wait on a dead
+        // device.
+        if (queue_.empty() && lost_)
+        {
+            return not_found(fmt::format("{}: {}", id_.toString(), lostReason_));
         }
 
         size_t count = 0;
@@ -167,7 +258,7 @@ public:
             copy = statistics_;
         }
 
-        if (!running_)
+        if (!running())
         {
             copy.state = BusState::Stopped;
             return copy;
@@ -183,11 +274,18 @@ public:
         return copy;
     }
 
-    // Runs the Open/Version/Filter exchange and returns the bus handle.
-    static Result<uint8_t> handshake(Transport& transport, const MotecOptions& options);
+    struct Session
+    {
+        uint8_t busHandle { 0 };
+    };
+
+    // Runs Open, Version and Mode, the last carrying the bit rate. `reqid` is
+    // the channel's request counter, advanced past what the exchange used.
+    static Result<Session> handshake(Transport& transport, const MotecOptions& options,
+                                     uint8_t bitrateIndex, std::atomic<uint8_t>& reqid);
 
 private:
-    uint8_t next_reqid() { return static_cast<uint8_t>(nextReqid_++); }
+    uint8_t next_reqid() { return nextReqid_++; }
 
     void stop_reader()
     {
@@ -197,6 +295,23 @@ private:
             queueReady_.notify_all();
             reader_.join();
         }
+    }
+
+    // The link failed under the reader. Ends it: receive() and send() answer
+    // NotFound, running() goes false, and whoever owns the channel reopens it.
+    // Logging a failed read every 100 ms instead kept a dead dongle looking
+    // like a quiet bus.
+    void link_lost(const Error& error)
+    {
+        SPDLOG_ERROR("[motec] {} link lost: {}", id_.toString(), error.message);
+        {
+            std::lock_guard<std::mutex> queueLock(queueMutex_);
+            std::lock_guard<std::mutex> txLock(txMutex_);
+            lostReason_ = error.message;
+            lost_ = true;
+        }
+        queueReady_.notify_all();
+        txAnswered_.notify_all();
     }
 
     void pump()
@@ -228,9 +343,8 @@ private:
             auto got = transport_->receive(frames, Duration { options_.readTimeoutMs });
             if (!got.has_value())
             {
-                SPDLOG_WARN("[motec] {} receive failed: {}", id_.toString(), got.error().message);
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                continue;
+                link_lost(got.error());
+                return;
             }
 
             for (const auto& frame : frames)
@@ -269,6 +383,14 @@ private:
             {
                 break;
             }
+            {
+                std::lock_guard<std::mutex> lock(txMutex_);
+                if (txInFlight_ > 0)
+                {
+                    --txInFlight_;
+                }
+            }
+            txAnswered_.notify_all();
 
             // Two ways a transmit fails, and both have been seen on hardware.
             //
@@ -316,10 +438,10 @@ private:
             break;
 
         case Code::Open:
-        case Code::Poll:
+        case Code::Close:
         case Code::Ack:
         case Code::RegRead:
-        case Code::Filter:
+        case Code::Mode:
         case Code::Set:
             // Nothing is outstanding once the handshake is done, so anything
             // here is the device volunteering something. It used to be logged,
@@ -342,6 +464,15 @@ private:
         std::lock_guard<std::mutex> lock(queueMutex_);
         for (const auto& record : records)
         {
+            if (!record.hasFormat())
+            {
+                // The device's own damage when it cannot keep up with the bus
+                // (Record::hasFormat). A frame was lost, so it is counted as
+                // one; delivering it would invent traffic on identifier 0.
+                std::lock_guard<std::mutex> stats(statsMutex_);
+                statistics_.rxDropped++;
+                continue;
+            }
             if (queue_.size() >= queueDepth_)
             {
                 // Oldest first: on a bus being logged, the most recent frames
@@ -364,7 +495,7 @@ private:
     MotecOptions options_;
     Bitrate bitrate_;
     size_t queueDepth_ { 8192 };
-    uint8_t busHandle_ { 1 };
+    std::atomic<uint8_t> busHandle_ { 1 };
 
     std::atomic<uint8_t> nextReqid_ { 1 };
     std::atomic<bool> running_ { false };
@@ -378,6 +509,16 @@ private:
     mutable std::mutex queueMutex_;
     std::condition_variable queueReady_;
     std::deque<helpers::CanFrame> queue_;
+
+    // Set once, by the reader, under both queueMutex_ and txMutex_ so either
+    // waiter sees it with its own lock held. Never cleared: a reopened channel
+    // is a new channel.
+    std::atomic<bool> lost_ { false };
+    std::string lostReason_;
+
+    std::mutex txMutex_;
+    std::condition_variable txAnswered_;
+    unsigned txInFlight_ { 0 };
 
     mutable std::mutex errorMutex_;
     uint8_t lastStreamStatus_ { 0 };
@@ -449,9 +590,12 @@ Result<Frame> await_reply(Transport& transport, Code expected, uint8_t reqid,
     return reply;
 }
 
-Result<uint8_t> MotecChannel::handshake(Transport& transport, const MotecOptions& options)
+Result<MotecChannel::Session> MotecChannel::handshake(Transport& transport,
+                                                     const MotecOptions& options,
+                                                     uint8_t bitrateIndex,
+                                                     std::atomic<uint8_t>& nextReqid)
 {
-    uint8_t reqid = 1;
+    uint8_t reqid = nextReqid++;
 
     // Open first: everything after it has to quote the bus handle it returns.
     auto sent = transport.send(encode_frame(make_open(reqid)));
@@ -477,7 +621,8 @@ Result<uint8_t> MotecChannel::handshake(Transport& transport, const MotecOptions
                     "through the management tag",
                     kStatusLatched);
 
-        auto unlock = transport.send(encode_frame(make_unlock(++reqid)));
+        reqid = nextReqid++;
+        auto unlock = transport.send(encode_frame(make_unlock(reqid)));
         if (!unlock.has_value())
         {
             return std::unexpected(unlock.error());
@@ -491,13 +636,13 @@ Result<uint8_t> MotecChannel::handshake(Transport& transport, const MotecOptions
         {
             return protocol_error(fmt::format(
                 "the gateway is latched and the management tag refused to clear it (status "
-                "0x{:02X}). Unplug the dongle and plug it back in -- nothing else resets it; "
-                "see docs/libs/can_motec.md",
+                "0x{:02X}). Power-cycle the dongle -- nothing else resets it; see "
+                "docs/libs/can_motec.md",
                 cleared->status().value_or(0xFF)));
         }
 
         // And in again by the front door.
-        ++reqid;
+        reqid = nextReqid++;
         auto retry = transport.send(encode_frame(make_open(reqid)));
         if (!retry.has_value())
         {
@@ -516,14 +661,15 @@ Result<uint8_t> MotecChannel::handshake(Transport& transport, const MotecOptions
         return protocol_error(fmt::format("the gateway refused Open with status 0x{:02X}",
                                           opened->status().value_or(0xFF)));
     }
-    const uint8_t busHandle = opened->field5;
-    SPDLOG_DEBUG("[motec] session open, bus handle 0x{:02X}", busHandle);
+    Session session;
+    session.busHandle = opened->field5;
+    SPDLOG_DEBUG("[motec] session open, bus handle 0x{:02X}", session.busHandle);
 
     // Version is not needed to carry traffic, but it is the cheapest proof
     // that the device is what it claims and that the envelope is being parsed
     // correctly -- a real UTC answers 7.2.
-    ++reqid;
-    sent = transport.send(encode_frame(make_version(busHandle, reqid)));
+    reqid = nextReqid++;
+    sent = transport.send(encode_frame(make_version(session.busHandle, reqid)));
     if (!sent.has_value())
     {
         return std::unexpected(sent.error());
@@ -539,22 +685,25 @@ Result<uint8_t> MotecChannel::handshake(Transport& transport, const MotecOptions
                     version->payload[2]);
     }
 
-    // An accept-everything filter. Without one the device has been observed to
-    // deliver nothing, and "no frames at all" is indistinguishable from a
-    // quiet bus.
-    ++reqid;
-    sent = transport.send(encode_frame(make_accept_all_filter(busHandle, reqid)));
+    // Mode: stream mode, an accept-everything filter, and the bit rate.
+    // Without it the device delivers nothing, and "no frames at all" is
+    // indistinguishable from a quiet bus.
+    reqid = nextReqid++;
+    sent = transport.send(
+        encode_frame(make_accept_all_mode(session.busHandle, reqid, bitrateIndex)));
     if (!sent.has_value())
     {
         return std::unexpected(sent.error());
     }
-    auto filtered = await_reply(transport, Code::Filter, reqid, options.handshakeTimeoutMs);
-    if (!filtered.has_value())
+    auto moded = await_reply(transport, Code::Mode, reqid, options.handshakeTimeoutMs);
+    if (!moded.has_value())
     {
-        return std::unexpected(filtered.error());
+        return std::unexpected(moded.error());
     }
+    SPDLOG_INFO("[motec] bus set to {} bit/s (Mode rate index {})", kBitrateTable[bitrateIndex],
+                bitrateIndex);
 
-    return busHandle;
+    return session;
 }
 
 // ---------------------------------------------------------------------------
@@ -657,12 +806,12 @@ public:
                 "'{}' has a channel suffix; a MoTeC UTC is one CAN channel, so use 'motec:{}'",
                 id.toString(), id.device));
         }
-        if (options.bitrate.fd())
+        // Before anything is opened: a rate the device cannot run is the
+        // caller's mistake, not the link's.
+        auto bitrateIndex = resolve_bitrate(id, options.bitrate);
+        if (!bitrateIndex.has_value())
         {
-            return unsupported(fmt::format(
-                "'{}' asks for CAN FD; a MoTeC UTC is a classic CAN device. Remove the data bit "
-                "rate from its configuration",
-                id.toString()));
+            return std::unexpected(bitrateIndex.error());
         }
         if (options.listenOnly)
         {
@@ -679,19 +828,15 @@ public:
             return std::unexpected(transport.error());
         }
 
-        auto busHandle = MotecChannel::handshake(**transport, options_);
-        if (!busHandle.has_value())
+        std::atomic<uint8_t> nextReqid { 1 };
+        auto session = MotecChannel::handshake(**transport, options_, *bitrateIndex, nextReqid);
+        if (!session.has_value())
         {
-            return std::unexpected(busHandle.error());
+            return std::unexpected(session.error());
         }
 
-        // Said once, loudly, at the only moment anyone is looking: the number
-        // in the config did not reach the hardware and cannot.
-        SPDLOG_WARN("[motec] {} runs at whatever bit rate MoTeC's tool last configured; the "
-                    "requested {} is NOT applied and cannot be read back",
-                    id.toString(), options.bitrate.toString());
-
-        auto channel = std::make_shared<MotecChannel>(id, *transport, options, options_, *busHandle);
+        auto channel = std::make_shared<MotecChannel>(id, *transport, options, options_,
+                                                      session->busHandle, nextReqid.load());
         if (options.start)
         {
             auto started = channel->start();

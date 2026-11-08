@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 namespace can::motec
 {
@@ -51,10 +52,10 @@ const char* to_string(Code code)
     switch (code)
     {
     case Code::Open: return "Open";
-    case Code::Poll: return "Poll";
+    case Code::Close: return "Close";
     case Code::Ack: return "Ack";
     case Code::RegRead: return "RegRead";
-    case Code::Filter: return "Filter";
+    case Code::Mode: return "Mode";
     case Code::Tx: return "Tx";
     case Code::Rx: return "Rx";
     case Code::Set: return "Set";
@@ -143,9 +144,9 @@ size_t data_block_length(const Frame& frame)
         return get_be16(frame.payload, 1);
 
     case Code::Open:
-    case Code::Poll:
+    case Code::Close:
     case Code::Ack:
-    case Code::Filter:
+    case Code::Mode:
     case Code::Set:
     case Code::Version:
         return 0;
@@ -329,19 +330,17 @@ Frame base_frame(Code code, uint8_t tag, uint8_t field5, uint8_t reqid)
 
 } // namespace
 
-Frame make_open(uint8_t reqid, uint16_t protocolVersion, uint8_t tag)
+Frame make_open(uint8_t reqid, uint8_t bus, uint8_t timeout, uint8_t tag)
 {
     // field5 is 0xFF before a handle exists -- there is nothing to echo yet.
     Frame frame = base_frame(Code::Open, tag, 0xFF, reqid);
-    put_be16(frame.payload, protocolVersion);
+    frame.payload = { bus, timeout };
     return frame;
 }
 
-Frame make_unlock(uint8_t reqid, uint16_t protocolVersion)
+Frame make_unlock(uint8_t reqid, uint8_t bus, uint8_t timeout)
 {
-    Frame frame = base_frame(Code::Open, kManagementTag, 0xFF, reqid);
-    put_be16(frame.payload, protocolVersion);
-    return frame;
+    return make_open(reqid, bus, timeout, kManagementTag);
 }
 
 Frame make_version(uint8_t busHandle, uint8_t reqid, uint8_t tag)
@@ -349,31 +348,45 @@ Frame make_version(uint8_t busHandle, uint8_t reqid, uint8_t tag)
     return base_frame(Code::Version, tag, busHandle, reqid);
 }
 
-Frame make_poll(uint8_t busHandle, uint8_t reqid, uint8_t tag)
+Frame make_close(uint8_t busHandle, uint8_t reqid, uint8_t tag)
 {
-    return base_frame(Code::Poll, tag, busHandle, reqid);
+    return base_frame(Code::Close, tag, busHandle, reqid);
 }
 
-Frame make_filter(uint8_t busHandle, uint8_t reqid, uint32_t pattern, uint32_t mask, uint8_t index,
-                  uint8_t tag)
+std::optional<uint8_t> bitrate_index(uint32_t bitrateBps)
 {
-    Frame frame = base_frame(Code::Filter, tag, busHandle, reqid);
+    for (size_t index = 0; index < std::size(kBitrateTable); ++index)
+    {
+        const uint64_t entry = kBitrateTable[index];
+        const uint64_t requested = bitrateBps;
+        const uint64_t difference = requested > entry ? requested - entry : entry - requested;
+        // Within 0.5%, so 66666 and 66667 both name the 66.67 kbit/s entry.
+        if (difference * 200 <= entry)
+        {
+            return static_cast<uint8_t>(index);
+        }
+    }
+    return std::nullopt;
+}
+
+Frame make_mode(uint8_t busHandle, uint8_t reqid, uint32_t pattern, uint32_t mask, uint8_t mode,
+                uint8_t bitrateIndex, uint8_t tag)
+{
+    Frame frame = base_frame(Code::Mode, tag, busHandle, reqid);
     put_be32(frame.payload, pattern);
     put_be32(frame.payload, mask);
-    frame.payload.push_back(index);
-    // Three trailing zeroes whose meaning is not known; the captures always
-    // have them and the length is fixed at twelve.
+    frame.payload.push_back(mode);
     frame.payload.push_back(0);
     frame.payload.push_back(0);
-    frame.payload.push_back(0);
+    frame.payload.push_back(bitrateIndex);
     return frame;
 }
 
-Frame make_accept_all_filter(uint8_t busHandle, uint8_t reqid, uint8_t index, uint8_t tag)
+Frame make_accept_all_mode(uint8_t busHandle, uint8_t reqid, uint8_t bitrateIndex, uint8_t tag)
 {
     // Mask bits are don't-care, so all ones matches everything regardless of
     // the pattern.
-    return make_filter(busHandle, reqid, 0x00000000u, 0xFFFFFFFFu, index, tag);
+    return make_mode(busHandle, reqid, 0x00000000u, 0xFFFFFFFFu, kModeStream, bitrateIndex, tag);
 }
 
 Frame make_rx_subscribe(uint8_t busHandle, uint8_t reqid, uint8_t tag)

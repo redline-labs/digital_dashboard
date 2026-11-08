@@ -9,17 +9,23 @@
 //     motec:udp=192.168.1.40   a network gateway, default port 29456
 //     motec:udp=[fe80::1]:4000 the same, with an explicit port
 //
+// The bit rate goes in the Mode command every session sends (motec_gw.h,
+// make_mode), so it is set at open and set_bitrate() starts a new session to
+// change it. Six rates only: 1 Mbit/s, 500, 250, 125, 66.67 and 33.33 kbit/s;
+// anything else, and any sample point, is refused or ignored respectively --
+// the protocol has no field for either. Only 1 Mbit/s (index 0) has been seen
+// working on hardware; the other indices are CAN Inspector's table.
+//
 // WHAT THIS BACKEND CANNOT DO, because the protocol behind it is not published
 // and these parts of it were never worked out:
 //
-//   Set a bit rate. The `Set` command exists and its argument is known to be
-//   shaped like 0x40000000 | (value << 18), but which register selects the bus
-//   speed is not. The device runs at whatever MoTeC's own tool last configured
-//   it for, and set_bitrate() therefore FAILS rather than pretending. It also
-//   cannot read the rate back, so bitrate() returns what the caller asked for
-//   -- flagged here because that is exactly the "reports intent, not reality"
-//   trap the SocketCAN backend was fixed for. The difference is that there the
-//   truth was available and simply not asked for; here there is no way to ask.
+//   Read the bit rate back. bitrate() is what this session told the device.
+//
+//   Keep up with a saturated bus. A UTC passes about 8,100 frames a second at
+//   1 Mbit/s (a full bus of 8-byte 11-bit frames is about 8,400); past that it
+//   buffers about 2,000, then loses about three in every 131 and damages one
+//   more, which is dropped and counted in rxDropped. It transmits about 570
+//   frames a second, however fast send() is called.
 //
 //   Listen only. There is no known command, and a receive filter is not the
 //   same thing -- it stops frames arriving, not this node acknowledging them.
@@ -65,9 +71,14 @@ struct MotecOptions
     // unless it is told about it with a new_id write.
     bool detachKernelDriver { false };
 
-    // How long to wait for the device to answer Open, Version and Filter
+    // How long to wait for the device to answer Open, Version and Mode
     // during bring-up.
     unsigned int handshakeTimeoutMs { 1000 };
+
+    // How long send() waits for the device to answer an earlier transmit when
+    // two are already outstanding (utc_backend.cpp, kTxWindow), before
+    // deciding it has stopped answering.
+    unsigned int txAnswerTimeoutMs { 1000 };
 
     // How often to send a Version command purely to keep the session open.
     //

@@ -13,7 +13,11 @@ The user-facing half is in [can_bridge](../nodes/can_bridge.html).
 
 None of this is published. It comes from
 [motec-gw-sim](https://github.com/ryandavid/motec-gw-sim), reverse-engineered
-from CAN Inspector v1.19 and from packet captures of a genuine UTC.
+from CAN Inspector v1.19 and from packet captures of a genuine UTC. A later
+pass over CAN Inspector's serialisers corrected three readings this library
+had shipped with: `0x06` is the Mode command and carries the bit rate, `0x01`
+is Close rather than Poll, and the Open payload is a bus and a timeout rather
+than a protocol version.
 
 `libs/can_motec/tests/golden/utc_frames.h` holds eleven frames captured from
 real hardware, and every one has to decode and re-encode byte-identically.
@@ -43,14 +47,14 @@ initial value `0xFFFF`, non-reflected, no final XOR.
 
 | Code | Command | |
 |---|---|---|
-| `0x00` | Open | Returns the bus handle every later request must echo in `field5` |
-| `0x01` | Poll | Answered with a bare status |
+| `0x00` | Open | Payload `[bus][timeout]`; returns the bus handle every later request must echo in `field5` |
+| `0x01` | Close | Ends the session; answered with a bare status |
 | `0x02` | Ack | One-way; must **not** be answered |
 | `0x04` | RegRead | Register read; answers on the data path |
-| `0x06` | Filter | Acceptance filter write; mask bits are *don't care* |
+| `0x06` | Mode | Receive mode, one id/mask filter, and the bit rate |
 | `0x08` | Tx | Transmit; records ride in the data block |
 | `0x09` | Rx | Subscribe: sent **once**, then the device free-runs |
-| `0x0A` | Set | Config write; register map unknown |
+| `0x0A` | Set | A value write used by MoTeC's ADL protocol; not the bit rate |
 | `0x0F` | Version | A real UTC answers 7.2 |
 
 The code is the low four bits of `CMD`, not five: the reply bit `0x10` sits
@@ -127,35 +131,68 @@ large, stable, entirely wrong identifier. Neither failure is visible without
 a second device on the bus, which is why the table above is in
 `tests/golden/utc_frames.h` as data rather than in a comment.
 
-## The acceptance filter, as the hardware actually behaves
+## The Mode command: filter, receive mode and bit rate
 
-Measured against a real UTC, because none of this is in the captures.
+`0x06` was read for a long time as an acceptance-filter write. It is CAN
+Inspector's Mode command, and its twelve-byte payload is:
 
-The index must be 2 or 3. Index 0 and anything from 4 up are refused with
-status `0x22`. Index 1 is refused with `0x40`, a different status, so 1 looks
-like a slot that exists and is reserved rather than a value out of range. The
-captured client used 3, and that is the default.
+```
++0   BE32  id pattern    bit 31 = extended, bit 30 = standard, as in a record
++4   BE32  mask          1 = don't care
++8   u8    mode          1 ADL, 2 message/polled, 3 message-stream
++9   u8    0
++10  u8    0
++11  u8    bit-rate index
+```
 
-One filter per session, whatever its index. The second write is refused with
-`0x22` whether it repeats the first index or names the other valid one. An
-`Open` is what clears it. So this is not a bank of filters to populate; it is
-one filter, written once, before the Rx subscribe. Pattern and mask are
-accepted freely, including an all-ones mask.
+| Index | Bit rate |
+|---|---|
+| 0 | 1 Mbit/s (CAN Inspector also sends 0 for anything out of range) |
+| 1 | 500 kbit/s |
+| 2 | 250 kbit/s |
+| 3 | 125 kbit/s |
+| 4 | 66.67 kbit/s |
+| 5 | 33.33 kbit/s |
 
-This cost a bring-up: the first attempt used index 0 with an all-ones mask,
-which the device refused, and the only diagnostic was `status 0x22`.
+The byte positions come from CAN Inspector's serialisers and from all three
+captured Mode commands. The rate table comes from its UI string table and the
+`rate > 5 → 0` clamp. Every capture, and every session this library has run,
+used index 0, so only 1 Mbit/s has been seen working. The other five indices
+are unconfirmed on hardware. To confirm one, open at 500 kbit/s on a 500 kbit/s
+bus with a second adapter and check that frames cross.
+
+Byte +11 used to be sent as an unexplained zero. So every session this
+library ever opened set the UTC to 1 Mbit/s, while the backend warned that it
+could not set the rate at all. Every hardware session here ran on a 1 Mbit/s
+bus, so this never showed.
+
+What was learned on a real UTC, read again with the layout above:
+
+- The "index" byte was the mode. Modes 0 and 4 and up are refused with
+  `0x22`. Mode 1 (ADL) was refused with `0x40` in one session, though a
+  captured client used it in another. Stream mode, 3, is the default.
+- Only one Mode is accepted per session. A second is refused with `0x22`,
+  and an `Open` starts a new session. So changing the bit rate means Open,
+  Version and Mode again, and `set_bitrate()` does exactly that.
+- Pattern and mask are accepted freely, including an all-ones mask.
+
+The first bring-up attempt used mode 0 with an all-ones mask. The device
+refused it, and the only diagnostic was `status 0x22`.
 
 ## The session
 
 ```
 Open    -> bus handle
 Version -> 7.2
-Filter  -> accept everything
+Mode    -> stream mode, accept everything, the bit rate
 Rx      -> subscribe ONCE; the device then free-runs
 ```
 
 After the subscribe the device pushes a data frame roughly every 255 ms on its
-own request-id counter, empty ones included. The idle ones are what
+own request-id counter, empty ones included. The subscribe payload is
+`FF FF <period> <flags>`, and the third byte is most likely that period in
+milliseconds: `0xFF` is sent here, and CAN Inspector sends `0x64`. That rests
+on one capture. The idle ones are what
 `statistics()` uses to tell a live link from a dead one: nothing arriving for
 `rxStallTimeoutMs` reports `BusState::Unknown` rather than a flattering
 `ErrorActive`.
@@ -218,15 +255,16 @@ blanket `0x21`. An `Open` addressed there clears the latch, after which the
 normal tag works again:
 
 ```
-tag 1..7  Open / Version / Poll   -> 0x21   (everything refused)
+tag 1..7  Open / Version / Close  -> 0x21   (everything refused)
 tag 0     Version                 -> 0x22
-tag 0     Poll                    -> 0x04
+tag 0     Close                   -> 0x04
 tag 0     Open, no payload        -> 0x23
-tag 0     Open, version payload   -> 0x00   <- clears it
+tag 0     Open, [bus][timeout]    -> 0x00   <- clears it
 ```
 
 The payload matters: an `Open` on tag 0 with no payload is answered `0x23`
-and the device stays latched.
+and the device stays latched. `0x23` is also the status that tells CAN
+Inspector to retry with a one-byte V3 Open.
 
 `can_motec` does this automatically. `handshake()` recognises `0x21`, sends
 the unlock and reopens, and the log says so when it happens.
@@ -257,16 +295,30 @@ mid-stream all left the device perfectly healthy. The trigger is still open,
 which is exactly why the recovery is automatic rather than documented as a
 manual procedure.
 
+One trigger is known, and it causes a worse latch. On macOS, a host writing
+transmits faster than the device drained them left a USB write stuck part way
+through a frame. The device then answered `0x21` on the management tag too,
+and stayed that way until it was power-cycled. The tag-0 unlock cannot clear
+that one, so it has to be prevented. `send()` keeps at most two transmits
+unanswered (`kTxWindow`), and waits up to `txAnswerTimeoutMs` for room. That
+caps a UTC at about 570 transmits a second.
+
 ## The bit rate
 
-The device runs at whatever MoTeC's own tool last configured it for. The
-`bitrate:` in the config is recorded and reported but does not reach the
-hardware. The `Set` command exists and its argument is shaped like
-`0x40000000 | (value << 18)`, but which register selects the bus speed is
-unknown, so `set_bitrate()` returns `Unsupported` rather than pretending, and
-nothing in the protocol reports the rate back.
+The bit rate is byte +11 of the Mode command (see above). Every session sends
+it, so the configured `bitrate:` reaches the hardware at open. `set_bitrate()`
+opens a new session to change it. A rate outside the six in the table is
+refused with `Unsupported`. The sample point has no field, so it is the
+device's choice.
 
-Because the rate cannot be checked, a mismatch presents as a bus that carries
+`Set` (`0x0A`) is not involved. It was once taken for the bit-rate write
+because its argument looked like `0x40000000 | (value << 18)`. That shape is
+the Mode command's 11-bit identifier encoding. `Set` itself is an ADL-protocol
+value write with no caller in CAN Inspector's CAN paths, and a guessed
+bit-rate write through it was refused with `0x22`.
+
+Nothing in the protocol reports the rate back, and five of the six indices are
+unconfirmed on hardware. A wrong rate still presents as a bus that carries
 nothing, with no error anywhere. That is worth remembering before suspecting
 the cable.
 
@@ -277,15 +329,15 @@ them fails silently if guessed at.
 
 | | Why |
 |---|---|
-| **Set the bit rate** | Register unknown; `set_bitrate()` returns `Unsupported`. |
+| **A rate outside the table** | Only 1 Mbit/s, 500, 250, 125, 66.67 and 33.33 kbit/s exist; anything else is refused. |
 | **Read the bit rate back** | Nothing in the protocol reports it. |
 | **Listen-only** | No known command. A receive filter is not equivalent: it stops frames being delivered, but the controller still acknowledges them on the bus, which is the entire point of listen-only. An open that asks for it fails. |
 | **CAN FD** | The hardware is classic CAN. |
 | **Bus state, error counters, bus-off** | Nothing in the protocol carries them. |
 | **Remote (RTR) frames** | Four bits of the flags byte are not understood and one of them is presumably RTR. Sending one would put a data frame on the bus where a request was meant. |
-| **More than one acceptance filter** | The device accepts exactly one Filter write per session. |
+| **More than one acceptance filter** | The device accepts exactly one Mode command per session. |
 | **Leaving the link idle** | The session times out after ~10 s of client silence; the driver sends a periodic `Version` to prevent it. |
-| **Closing a session** | No close command is known, and the device latches. |
+| **Closing a session** | `0x01` is Close, from CAN Inspector's code, and `make_close()` builds it. The backend does not send it yet: it has not been tried on a UTC, and whether it prevents the latch is untested. |
 
 ## What has been verified, and how
 
@@ -299,10 +351,11 @@ The USB transport has since run against a real UTC (serial 56536) with a
 PCAN-USB Pro FD on the same 1 Mbit/s bus, each acting as the other's oracle.
 Confirmed on hardware: the FTDI status stripping and the stream reassembly
 (the device answers `Version 7.2`, which cannot be read without both being
-right); the session sequence of Open, Version, Filter, Rx subscribe; receive,
+right); the session sequence of Open, Version, Mode, Rx subscribe; receive,
 including the keep-alive cadence that the stall detector uses; transmit, in
 both identifier formats, checked by a second dongle on the wire; and the
-identifier layouts and filter rules above, which is where the bugs were.
+identifier layouts and Mode rules above, which is where the bugs were. The
+bus was 1 Mbit/s throughout, which is the only rate index 0 could have set.
 Frames verified crossing the bus in both directions: `0x201` and `0x7FF`
 standard, `0x1ABCDEF`, `0x1FEDCBA` and `0x1FFFFFFF` extended, at DLC 0, 2, 3
 and 8.
@@ -324,6 +377,15 @@ gaps, duplicates and reordering are all detectable:
 about 135 bits with stuffing, so the bus tops out near 7 400/s, and the
 highest rate actually observed arriving was 7 920/s. The pipeline is lossless
 right up to it, and there is no degradation over a 20-second soak.
+
+A later bench run, on macOS with a PCAN-USB Pro FD and the same UTC, sent
+5 000 sequence-numbered frames each way at 11 and 29 bits. Nothing was lost,
+duplicated or reordered, except when the UTC received a saturated 11-bit bus
+at 8 440 frames/s. The UTC passes about 8 100/s. Beyond that it buffers about
+2 000 frames, then loses about three in every 131. It also sends every 128th
+record with its identifier word zeroed and the data intact. Such a record has
+neither format bit, so the backend drops it and counts it in `rxDropped`.
+Delivered, it would be a frame on identifier 0.
 
 Do not offer frames faster than the bus can carry them. Handing the adapter
 15 000/s when the bus does 7 400/s loses roughly half of them: USB accepts
@@ -402,7 +464,7 @@ received precisely `txFrames` frames.
 Every measurement above used a PCAN and a UTC on the same bus as each other's
 oracle, and that arrangement is what found both identifier-layout bugs:
 neither is visible from one device. It also gives the diagnostic for the most
-common failure. A UTC whose stored bit rate does not match the bus carries
+common failure. A UTC set to a bit rate that does not match the bus carries
 nothing and reports no error, because the protocol has no way to read the
 rate back and no error counters to show the mismatch. A second adapter on the
 bus that does see traffic is the fastest way to tell "wrong timing" from "quiet
@@ -410,8 +472,13 @@ bus".
 
 ## Still unknown
 
-Worth looking for in any future capture: the meaning of the four-byte Rx
-subscribe payload (`FF FF FF 01` and `FF FF 64 01` have both been seen), the
-RTR bit, the upper four bits of the flags byte, the `Set` register map, the
-third dword of the Filter command, and what distinguishes filter index 2 from
-index 3.
+Worth looking for in any future capture or bench session:
+
+- whether bit-rate indices 1 to 5 run at the rates CAN Inspector labels them
+- whether the subscribe's third byte really is the push period, and what its
+  flags bit does
+- the RTR bit, and the upper four bits of the flags byte
+- what `Set` does on a UTC
+- whether Close on the stream tag is accepted, and whether closing cleanly
+  avoids the `0x21` latch
+- the gateway-side unit of the Open timeout byte

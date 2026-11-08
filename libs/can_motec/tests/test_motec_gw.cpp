@@ -25,6 +25,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstdlib>
+#include <iterator>
 #include <span>
 #include <string>
 #include <vector>
@@ -117,19 +118,20 @@ void test_captured_handshake_fields()
                           version.payload[2]));
     }
 
-    auto filter = round_trip(golden::kHandshake[3]);
-    check(filter.code() == Code::Filter, "the captured Filter write is a Filter");
-    check(filter.payload.size() == 12, "a Filter payload is twelve bytes");
-    if (filter.payload.size() == 12)
+    auto mode = round_trip(golden::kHandshake[3]);
+    check(mode.code() == Code::Mode, "the captured Mode is a Mode");
+    check(mode.payload.size() == 12, "a Mode payload is twelve bytes");
+    if (mode.payload.size() == 12)
     {
-        check(filter.payload[8] == 3, "and its index byte survives");
+        check(mode.payload[8] == kModeStream, "the captured client asked for stream mode");
+        check(mode.payload[11] == 0, "and bit-rate index 0, 1 Mbit/s");
     }
 
-    auto filtered = round_trip(golden::kHandshake[4]);
+    auto moded = round_trip(golden::kHandshake[4]);
     // The distinguishing property: this reply looks like a data-path reply
     // until you notice it has no length and no block.
-    check(filtered.data.empty(), "a Filter response carries no data block");
-    check(filtered.status().value_or(0xFF) == 0, "the Filter response reports success");
+    check(moded.data.empty(), "a Mode response carries no data block");
+    check(moded.status().value_or(0xFF) == 0, "the Mode response reports success");
 }
 
 void test_captured_data_path()
@@ -251,8 +253,8 @@ void test_builders_produce_decodable_frames()
     } built[] = {
         { "Open", make_open(0x01) },
         { "Version", make_version(0x01, 0x02) },
-        { "Poll", make_poll(0x01, 0x03) },
-        { "accept-all Filter", make_accept_all_filter(0x01, 0x04) },
+        { "Close", make_close(0x01, 0x03) },
+        { "accept-all Mode", make_accept_all_mode(0x01, 0x04, 1) },
         { "Rx subscribe", make_rx_subscribe(0x01, 0x05) },
     };
 
@@ -269,13 +271,75 @@ void test_builders_produce_decodable_frames()
         }
     }
 
-    // The filter mask is "don't care" bits, so all ones has to mean everything
-    // gets through. Inverting that sense is a silent way to receive nothing.
-    const auto filter = make_accept_all_filter(0x01, 0x04);
-    check(filter.payload.size() == 12, "an accept-all filter is still twelve bytes");
-    check(filter.payload[4] == 0xFF && filter.payload[5] == 0xFF && filter.payload[6] == 0xFF
-              && filter.payload[7] == 0xFF,
-          "an accept-all filter sets every mask bit");
+    // The mask is "don't care" bits, so all ones has to mean everything gets
+    // through. Inverting that sense is a silent way to receive nothing.
+    const auto mode = make_accept_all_mode(0x01, 0x04, 3);
+    check(mode.payload.size() == 12, "an accept-all Mode is still twelve bytes");
+    check(mode.payload[4] == 0xFF && mode.payload[5] == 0xFF && mode.payload[6] == 0xFF
+              && mode.payload[7] == 0xFF,
+          "an accept-all Mode sets every mask bit");
+    check(mode.payload[8] == kModeStream, "in stream mode");
+    check(mode.payload[11] == 3, "carrying the bit-rate index in its last byte");
+}
+
+void test_builders_match_the_captured_handshake()
+{
+    // Rebuilt from their arguments, the Open and the Mode must be the captured
+    // bytes. The Mode's last byte was once taken for padding; it is the bit
+    // rate, and this pins where it sits against hardware rather than against
+    // this codec's own reading.
+    const auto open = helpers::fromHex(golden::kHandshake[0].hex).value();
+    check(encode_frame(make_open(0x01)) == open,
+          "make_open (bus 0, timeout 0x0A) rebuilds the captured Open");
+
+    const auto mode = helpers::fromHex(golden::kHandshake[3].hex).value();
+    check(encode_frame(make_mode(0x01, 0x03, 0x9CF80000u, 0x0000FFFFu, kModeStream, 0)) == mode,
+          "make_mode rebuilds the captured Mode");
+}
+
+void test_bitrate_index()
+{
+    const struct
+    {
+        uint32_t bps;
+        int index;
+    } cases[] = {
+        { 1000000, 0 }, { 500000, 1 }, { 250000, 2 }, { 125000, 3 },
+        // Both spellings of the thirds name the same entry.
+        { 66666, 4 }, { 66667, 4 }, { 33333, 5 }, { 33334, 5 },
+        // Within 0.5% still names the rate; the device runs the table value.
+        { 1004000, 0 },
+        // Rates a UTC cannot run. Each must be refused, never rounded to a
+        // neighbour: the wrong rate is a bus that carries nothing.
+        { 0, -1 }, { 800000, -1 }, { 2000000, -1 }, { 100000, -1 }, { 83333, -1 },
+        { 66000, -1 }, { 1006000, -1 }, { 0xFFFFFFFFu, -1 },
+    };
+    for (const auto& entry : cases)
+    {
+        const auto index = bitrate_index(entry.bps);
+        const int got = index.has_value() ? *index : -1;
+        check(got == entry.index,
+              fmt::format("{} bit/s is index {}, got {}", entry.bps, entry.index, got));
+    }
+    for (size_t index = 0; index < std::size(kBitrateTable); ++index)
+    {
+        check(bitrate_index(kBitrateTable[index]) == index,
+              fmt::format("table entry {} maps back to itself", index));
+    }
+}
+
+void test_records_without_a_format_bit()
+{
+    Record standard;
+    standard.wireId = kStandardIdBit | (0x123u << kStandardIdShift);
+    Record extended;
+    extended.wireId = kExtendedIdBit | 0x1CF81BECu;
+    Record damaged; // what an overrunning UTC sends every 128th record
+    damaged.wireId = 0;
+    damaged.flags = 8;
+
+    check(standard.hasFormat() && extended.hasFormat(), "real frames carry a format bit");
+    check(!damaged.hasFormat(), "a zeroed identifier word carries none");
 }
 
 void test_tx_builder_matches_the_capture()
@@ -732,6 +796,9 @@ int main()
 
     test_crc_matches_the_captures();
     test_builders_produce_decodable_frames();
+    test_builders_match_the_captured_handshake();
+    test_bitrate_index();
+    test_records_without_a_format_bit();
     test_tx_builder_matches_the_capture();
     test_can_frame_conversion();
     test_identifier_layouts_against_the_wire();

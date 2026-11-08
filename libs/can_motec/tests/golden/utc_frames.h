@@ -39,10 +39,11 @@ inline constexpr CapturedFrame kHandshake[] = {
     { "Open response", "80 81 86 05 30 01 01 00 1a b3" },
     // A real UTC reports 7.2.
     { "Version response", "80 81 86 07 3f 01 02 00 07 02 fc e9" },
-    { "Filter write", "80 81 86 10 26 01 03 9c f8 00 00 00 00 ff ff 03 00 00 00 38 4c" },
-    // A bare status and NO data block, which is what distinguishes a Filter
+    // Stream mode (3) at bit-rate index 0, 1 Mbit/s, in the last payload byte.
+    { "Mode", "80 81 86 10 26 01 03 9c f8 00 00 00 00 ff ff 03 00 00 00 38 4c" },
+    // A bare status and NO data block, which is what distinguishes a Mode
     // reply from the data-path replies.
-    { "Filter response", "80 81 86 05 36 01 03 00 5b 48" },
+    { "Mode response", "80 81 86 05 36 01 03 00 5b 48" },
 };
 
 // The register read, which is a data-path response: status, a BE16 length, and

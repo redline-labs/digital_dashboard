@@ -356,16 +356,16 @@ discovery seeing only live traffic, and what `accepted: false` and
   included. Nothing at the USB level helps -- not a reset, not port-power
   disable, not a host reboot -- because the FT245BM in front is only a FIFO
   bridge. Tag 0 is a separate endpoint that stays responsive, and an `Open`
-  there clears it; `can_motec` does this automatically. See
-  `docs/libs/can_motec.md`.
-- **A MoTeC UTC cannot be told its bit rate, and says so.** The protocol
-  (`libs/can_motec`, reverse-engineered -- see `docs/design/motec-utc-protocol.md`) has no known
-  command for it, so `set_bitrate()` FAILS rather than accepting a number it
-  cannot apply, and the backend warns at every open. That is the opposite of
-  the bug the SocketCAN backend had, where the truth was available over netlink
-  and simply never read; here it is unavailable, which is why the answer is a
-  loud refusal instead of a quiet guess. A wrong rate presents as a bus that
-  carries nothing, with no error anywhere.
+  there clears it; `can_motec` does this automatically. A UTC flooded with
+  transmits latched past even that, until power-cycled -- which is why
+  `send()` keeps at most two unanswered. See `docs/libs/can_motec.md`.
+- **A MoTeC UTC's bit rate is byte +11 of the Mode command (`0x06`).** That
+  command was long read as a filter write with trailing padding, so every
+  session silently set 1 Mbit/s while the backend claimed the rate could not
+  be set; a 1 Mbit/s bench hid it. Six rates exist, a change is a new session,
+  and only index 0 has been confirmed on hardware -- see
+  `docs/design/motec-utc-protocol.md`. Nothing reads the rate back, so a wrong
+  rate still presents as a bus that carries nothing, with no error anywhere.
 - **The MoTeC codec is pinned by captured hardware frames, not by the spec.**
   `libs/can_motec/tests/golden/utc_frames.h` holds eleven datagrams from a real
   UTC and every one must re-encode byte-identically. The protocol is

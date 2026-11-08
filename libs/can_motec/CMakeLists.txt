@@ -41,3 +41,17 @@ target_link_libraries(can_motec_test_gw
 )
 
 add_project_test(TARGET can_motec_test_gw LABELS can_motec can motec unit)
+
+# The channel's session behaviour against a fake gateway on loopback UDP: the
+# bit rate in the Mode command, the transmit window, damaged records, link loss.
+add_executable(can_motec_test_channel
+    tests/test_utc_channel.cpp
+)
+
+target_link_libraries(can_motec_test_channel
+    PRIVATE
+        can_motec
+        spdlog::spdlog
+)
+
+add_project_test(TARGET can_motec_test_channel LABELS can_motec can motec net)

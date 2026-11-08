@@ -26,7 +26,7 @@ the measurements are in the
 
 | Header | |
 | --- | --- |
-| `can_motec/motec_gw.h` | The pure codec: `encode_frame`, `decode_frame`, `data_block_length`, `pack_records`, `unpack_records`, `to_can_frame`, `from_can_frame`, the `make_*` builders, `FrameReader` for stream reassembly, `strip_ftdi_status`, `make_unlock`. |
+| `can_motec/motec_gw.h` | The pure codec: `encode_frame`, `decode_frame`, `data_block_length`, `pack_records`, `unpack_records`, `to_can_frame`, `from_can_frame`, the `make_*` builders (`make_mode` carries the bit rate), `bitrate_index`, `FrameReader` for stream reassembly, `strip_ftdi_status`, `make_unlock`. |
 | `can_motec/utc_backend.h` | The `can::Backend` that enumerates and opens UTCs and gateways; `MotecOptions`. |
 
 `src/utc_transport.h` is private: the libusb and UDP transports behind the
@@ -56,22 +56,22 @@ number (the one this was written against is `56536`), so there is no way to
 tell an index from a serial by looking at it. A digit string is tried as an
 index first and as a serial second, and `serial=` forces the second reading.
 
-`set_bitrate()` returns `Unsupported`. The `Set` command exists and its
-argument is shaped like `0x40000000 | (value << 18)`, but which register
-selects the bus speed is unknown, so the device runs at whatever MoTeC's own
-tool last configured it for. `bitrate()` returns what the caller asked for,
-which is exactly the "reports intent rather than reality" trap the SocketCAN
-backend was fixed for; the difference is that there the truth was available
-over netlink and never asked for, and here there is no way to ask. The
-backend says so at every open:
+The bit rate is set at open. It travels in byte +11 of the Mode command that
+every session sends (see the
+[design note](../design/motec-utc-protocol.html#the-mode-command-filter-receive-mode-and-bit-rate)).
+`set_bitrate()` changes it by opening a new session: Open, Version, Mode and
+the subscribe again. Only six rates exist: 1 Mbit/s, and 500, 250, 125, 66.67
+and 33.33 kbit/s. Any other rate is refused with `Unsupported` before anything
+is sent. The sample point has no field in the protocol, so it is ignored.
 
-```
-[warning] [motec] motec:0 runs at whatever bit rate MoTeC's tool last
-          configured; the requested 1 Mbit/s is NOT applied and cannot be read back
-```
+{: .warning }
+Only 1 Mbit/s has been seen working on hardware. The other five indices come
+from CAN Inspector's table and are not yet confirmed. Before this was
+understood, every session sent index 0, so a UTC opened by any earlier build
+was set to 1 Mbit/s whatever `bitrate:` said.
 
-If the `Set` register map is ever worked out, `set_bitrate()` is the one
-function that has to change.
+Nothing reports the rate back, so `bitrate()` is what this session told the
+device.
 
 The device can latch into a state where every command on the normal tag,
 `Open` included, is answered `status 0x21`. `handshake()` recognises this,
@@ -87,21 +87,20 @@ backend fails loudly instead.
 
 | | Why |
 |---|---|
-| Set the bit rate | Register unknown; `set_bitrate()` returns `Unsupported`. |
+| A rate outside the six | The Mode command's index has six values; anything else is refused. |
 | Read the bit rate back | Nothing in the protocol reports it. |
 | Listen-only | No known command. A receive filter is not equivalent: it stops frames being delivered, but the controller still acknowledges them on the bus. An open that asks for it fails. |
 | CAN FD | The hardware is classic CAN. |
 | Bus state, error counters, bus-off | Nothing in the protocol carries them; `statistics()` leaves the controller state `Unknown` while the link is alive. |
 | Remote (RTR) frames | Four bits of the flags byte are not understood and one of them is presumably RTR. Sending one would put a data frame on the bus where a request was meant. |
-| More than one acceptance filter | The device accepts exactly one `Filter` write per session. |
+| More than one acceptance filter | The device accepts exactly one Mode command per session. |
+| Receiving a saturated bus | A UTC passes about 8,100 frames/s. Past that it loses frames and damages every 128th record; damaged ones are dropped and counted in `rxDropped`. |
 | Leaving the link idle | The session times out after about ten seconds of client silence; the driver sends `Version` every `keepAliveIntervalMs` (`2000`) from the receive thread. |
-| Closing a session | No close command is known. |
+| Closing a session | `make_close()` builds Close (`0x01`), but the backend does not send it: it is untried on hardware. |
 
-The acceptance filter index must be 2 or 3; the captured client used 3 and
-that is the default. One filter per session, written once, before the Rx
-subscribe; an `Open` is what clears it. Pattern and mask are accepted freely,
-including an all-ones mask, which is what makes "accept everything" possible
-in a single write.
+The Mode command's mode byte must be 1 to 3; the backend sends 3, stream
+mode, with an all-ones mask, which accepts everything. One Mode per session,
+before the Rx subscribe; an `Open` starts a new session.
 
 Standard and extended identifiers are laid out differently on the wire: bit
 31 set means extended with the 29-bit identifier in bits 0..28, bit 30 set
@@ -125,15 +124,26 @@ A queue shallower than the largest batch drops frames even on a quiet bus.
 The `8192` default holds about two seconds of a saturated bus; anything under
 about a hundred is asking for drops.
 
-`send()` counts a frame optimistically because it cannot wait for a USB round
-trip; the acknowledgement arrives on the receive thread and corrects
-`txFrames` and `txDropped` there. `status 0x20` on a Tx acknowledgement means
+`send()` keeps at most two transmits unanswered by the device. A third waits
+for an answer, for up to `txAnswerTimeoutMs` (`1000`), and then fails without
+being written. Writing faster than the device drains has latched a UTC so
+badly that only a power cycle cleared it. The cost is throughput: about 570
+transmits a second. [can_bridge](../nodes/can_bridge.html) sends from its own
+thread, so that wait never holds up a zenoh callback.
+
+Within that window `send()` counts a frame optimistically, and the
+acknowledgement arrives on the receive thread and corrects `txFrames` and
+`txDropped` there. `status 0x20` on a Tx acknowledgement means
 the device did not take the frame. It happens transiently under load and
 permanently when nothing on the bus acknowledges: a lone UTC accepts about
 four frames and then refuses everything, because the controller is still
 retrying the first. There is no transmit-overflow report in the protocol, so
 `Statistics::txFrames` counts frames handed to the adapter, not frames that
 reached the wire.
+
+A read that fails ends the channel. `running()` goes false, and `receive()` and
+`send()` answer `NotFound`, which is what [can_bridge](../nodes/can_bridge.html)
+reopens on. It used to log the failure every 100 ms and look like a quiet bus.
 
 After the Rx subscribe the device pushes a data frame roughly every 255 ms on
 its own request-id counter, empty ones included. Nothing arriving for
@@ -144,8 +154,14 @@ ticks/s, so it drifts against wall-clock by about 0.18%.
 ## Tests
 
 ```bash
-ctest --test-dir build -L motec      # can_motec_test_gw
+ctest --test-dir build -L motec      # can_motec_test_gw, can_motec_test_channel
 ```
+
+`can_motec_test_channel` (`net`) runs the channel against a fake gateway on
+loopback UDP. It covers the bit rate reaching the Mode command, a rate change
+opening a new session, refused rates sending nothing, the two-transmit window,
+damaged records being dropped, and a dead link ending the channel. Each of
+these was checked by reverting the fix and watching the test fail.
 
 `can_motec_test_gw` is labelled `can`, `motec` and `unit`, and it is built
 around `tests/golden/utc_frames.h`: eleven frames captured from a genuine UTC
@@ -166,6 +182,8 @@ The rest of the file covers the stream reassembly the captures cannot:
 `test_tx_ack_does_not_swallow_the_next_frame`,
 `test_reader_resynchronises_after_damage`, `test_ftdi_status_stripping`,
 `test_identifier_layouts_against_the_wire` (the measured table),
+`test_builders_match_the_captured_handshake` (the Open and the Mode rebuilt
+byte for byte, which pins where the bit rate sits), `test_bitrate_index`,
 `test_unlock_addresses_the_management_tag` and
 `test_keepalive_defaults_stay_inside_the_device_window`. None of it needs a
 dongle; the transports are exercised against real hardware and a UDP gateway

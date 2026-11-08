@@ -16,10 +16,10 @@
 // captures are the important half -- tests/golden/utc_frames.h holds eleven
 // frames taken off real hardware, and every one of them round-trips through
 // this file. What is NOT confirmed is called out at its definition, and the
-// list is short but real: the meaning of the Rx subscribe payload, the RTR
-// bit, the upper bits of the flags byte, and the register map behind the Set
-// command -- which is why this backend cannot set a bit rate. See
-// docs/libs/can_motec.md.
+// list is short but real: the Rx subscribe payload (its period byte is a
+// strong inference), the RTR bit, the upper bits of the flags byte, what the
+// Set command does, and whether the non-zero bit-rate indices of the Mode
+// command behave as CAN Inspector's table says. See docs/libs/can_motec.md.
 //
 // Envelope, indexed from the start of the datagram:
 //
@@ -99,21 +99,25 @@ enum class Code : uint8_t
     // Opens a session. The response's field5 is the bus handle every later
     // request has to echo.
     Open = 0x00,
-    // Handshake. Answered with a bare status, not a data frame.
-    Poll = 0x01,
+    // Ends the session (CAN Inspector's CMinReqCmd). Answered with a bare
+    // status. Not a keep-alive, which it was once taken for.
+    Close = 0x01,
     // One-way. Must NOT be answered -- replying to it desynchronises the
     // request-id matching at the other end.
     Ack = 0x02,
     // Register/memory read. Answers on the data path.
     RegRead = 0x04,
-    // CAN acceptance filter write.
-    Filter = 0x06,
+    // Mode: the receive mode, one id/mask acceptance filter, AND the CAN bit
+    // rate. Once per session, after Version. Long read as a filter write
+    // only; see make_mode().
+    Mode = 0x06,
     // Transmit. Records ride in the data block.
     Tx = 0x08,
     // Subscribe to received frames. Sent ONCE; the device then free-runs.
     Rx = 0x09,
-    // Configuration register write. Register map unknown -- see the note on
-    // set_bitrate in utc_backend.h.
+    // A value write used only by MoTeC's ADL protocol; payload
+    // [BE32 key][len][8 bytes]. NOT the bit rate (that is Mode's), and what
+    // it does on a UTC is unknown -- a guessed write was refused with 0x22.
     Set = 0x0A,
     // Version negotiation. A real UTC answers 7.2.
     Version = 0x0F,
@@ -218,6 +222,11 @@ struct Record
 
     uint8_t dlc() const { return static_cast<uint8_t>(flags & 0x0F); }
     bool extended() const { return (wireId & kExtendedIdBit) != 0; }
+    // Every frame a UTC receives carries one of the two format bits. Under
+    // sustained overrun (past about 8,100 frames a second) a real UTC sent
+    // every 128th record with the identifier word zeroed and the data intact:
+    // that is damage, not a frame with identifier 0.
+    bool hasFormat() const { return (wireId & (kExtendedIdBit | kStandardIdBit)) != 0; }
     // The identifier as the bus sees it, undoing whichever layout applies.
     uint32_t busId() const
     {
@@ -253,9 +262,14 @@ Result<Record> from_can_frame(const helpers::CanFrame& frame);
 
 inline constexpr uint8_t kDefaultTag = 1;
 
-// The version this client claims. Two bytes selects MoTeC's V6 command path;
-// one byte selects V3.
-Frame make_open(uint8_t reqid, uint16_t protocolVersion = 0x000A, uint8_t tag = kDefaultTag);
+// The V6 Open's payload is [bus][timeout] -- long misread as a two-byte
+// protocol version. CAN Inspector sends 00 05; the captured UTC client sent
+// 00 05 and 00 0A. The timeout's unit on the device is not confirmed (the
+// client derives its own Rx timeout as timeout * 1000 / 3 ms). A one-byte
+// payload is the V3 Open; a device answering 0x23 wants that instead.
+inline constexpr uint8_t kOpenTimeout = 0x0A;
+Frame make_open(uint8_t reqid, uint8_t bus = 0, uint8_t timeout = kOpenTimeout,
+                uint8_t tag = kDefaultTag);
 
 // --- getting a latched device back ------------------------------------------
 //
@@ -277,41 +291,63 @@ inline constexpr uint8_t kStatusLatched = 0x21;
 inline constexpr uint8_t kManagementTag = 0;
 
 // An Open on the management tag. The payload matters: with none at all the
-// device answers 0x23 and stays latched.
-Frame make_unlock(uint8_t reqid, uint16_t protocolVersion = 0x000A);
+// device answers 0x23 (the "use a V3 Open" status) and stays latched.
+//
+// There is a worse latch this does NOT clear: writing transmits faster than
+// the device drains them left a USB write stuck part way through a frame and
+// the device answering 0x21 on the management tag too, until power-cycled.
+// That one is prevented, not recovered -- see kTxWindow in utc_backend.cpp.
+Frame make_unlock(uint8_t reqid, uint8_t bus = 0, uint8_t timeout = kOpenTimeout);
 Frame make_version(uint8_t busHandle, uint8_t reqid, uint8_t tag = kDefaultTag);
-Frame make_poll(uint8_t busHandle, uint8_t reqid, uint8_t tag = kDefaultTag);
+Frame make_close(uint8_t busHandle, uint8_t reqid, uint8_t tag = kDefaultTag);
 
-// Mask bits are "don't care", so a mask of all ones accepts every identifier.
+// --- Mode: receive mode, acceptance filter and bit rate ----------------------
 //
-// TWO RULES, both learned from a real UTC rather than from the captures, and
-// both of which make the device answer 0x22 rather than explain itself:
+// Payload, twelve bytes:
 //
-//   The index must be 2 or 3. 0 and anything from 4 up are refused with 0x22,
-//   and 1 is refused with 0x40 -- a distinct status, so 1 is presumably a slot
-//   that exists and is reserved rather than a value out of range.
+//     +0   BE32  id pattern   (bit 31 = extended, bit 30 = standard, as in a record)
+//     +4   BE32  mask         1 = don't care, so all ones accepts everything
+//     +8   u8    mode         1 ADL, 2 message/polled, 3 message-stream
+//     +9   u8    0
+//     +10  u8    0
+//     +11  u8    bit-rate index (kBitrateTable)
 //
-//   ONE filter may be written per session, whatever its index. The second
-//   write is refused whether it names the same index or the other valid one,
-//   and an Open is what clears it. So this is not a bank of filters to be
-//   populated; it is one filter, set once, before the Rx subscribe.
-inline constexpr uint8_t kFilterIndexExtended = 3;
-inline constexpr uint8_t kFilterIndexStandard = 2;
+// This was read as a filter write for a long time, with +8 as a "filter index"
+// and +11 as padding -- which meant every session set the bus to index 0,
+// 1 Mbit/s, while the backend said the rate could not be set at all. The
+// layout comes from CAN Inspector's serialisers and all three captures.
+//
+// Learned on a real UTC: mode 0 and 4 and up are refused with 0x22, and 1 was
+// refused with 0x40 in one session (a captured client did use 1). ONE Mode is
+// accepted per session -- a second is refused, and an Open starts a new
+// session -- so changing the rate means Open, Version, Mode again.
+inline constexpr uint8_t kModeAdl = 1;
+inline constexpr uint8_t kModeMessage = 2;
+inline constexpr uint8_t kModeStream = 3;
 
-Frame make_filter(uint8_t busHandle, uint8_t reqid, uint32_t pattern, uint32_t mask,
-                  uint8_t index, uint8_t tag = kDefaultTag);
+// CAN Inspector's table: the index is what goes on the wire, and the client
+// clamps anything above 5 to 0. Index 0 is the only one a capture shows; the
+// others are its UI labels, NOT yet confirmed against hardware.
+inline constexpr uint32_t kBitrateTable[] = { 1000000, 500000, 250000, 125000, 66667, 33333 };
 
-// Index 3 by default: it is what the captured client used, and with an
-// all-ones mask every identifier is a don't-care match anyway.
-Frame make_accept_all_filter(uint8_t busHandle, uint8_t reqid,
-                             uint8_t index = kFilterIndexExtended,
-                             uint8_t tag = kDefaultTag);
+// The index for a rate within 0.5% of a table entry (the tolerance CiA 301
+// allows across a bus), or nullopt for a rate the device cannot run.
+std::optional<uint8_t> bitrate_index(uint32_t bitrateBps);
+
+Frame make_mode(uint8_t busHandle, uint8_t reqid, uint32_t pattern, uint32_t mask, uint8_t mode,
+                uint8_t bitrateIndex, uint8_t tag = kDefaultTag);
+
+// Stream mode, accepting every identifier, at `bitrateIndex`.
+Frame make_accept_all_mode(uint8_t busHandle, uint8_t reqid, uint8_t bitrateIndex,
+                           uint8_t tag = kDefaultTag);
 
 // Sent once. The device then pushes data frames on its own request-id counter
 // roughly every 255 ms, empty ones included, and never asks for anything back.
 //
-// The four payload bytes are NOT understood. Two values have been seen in
-// captures -- FF FF FF 01 and FF FF 64 01 -- and this sends the first.
+// Payload FF FF <period> <flags>. The third byte is most likely the push
+// period in ms: this sends 0xFF and a UTC pushed every ~255 ms; CAN Inspector
+// sends 0x64. One capture, so inference rather than proof. Bit 0 of flags is
+// a session capability bit.
 Frame make_rx_subscribe(uint8_t busHandle, uint8_t reqid, uint8_t tag = kDefaultTag);
 
 Frame make_tx(uint8_t busHandle, uint8_t reqid, std::span<const Record> records,
