@@ -30,14 +30,57 @@ TEST(config_block_header_length_and_crc) {
     const size_t rec = layout::kOutputConfig - layout::kConfig;
     CHECK_EQ((block[rec] << 8) | block[rec + 1], 9);
     CHECK_EQ(block[rec + layout::kOutMask], 1);
-    CHECK_EQ(block[layout::kLogicCount - layout::kConfig], 3);
+    CHECK_EQ(block[layout::kLogicCount - layout::kConfig], 2);
     CHECK_EQ(block[layout::kStreamIdrs - layout::kConfig], 0x500 >> 3);
+}
+
+// The unused channels as PDM Manager lays them out (and as a real unit with no logic holds them): one more step past
+// the last routine to a CLRA; RTS at the end of the code, then lengths of 0, so every channel from the count on runs
+// it. Unused references point at the first of those channels.
+TEST(config_unused_channels_run_the_clra_rts_routine) {
+    ConfigSpec spec;
+    spec.rules.push_back(OutputRule{});
+    const std::vector<uint8_t> block = build_config(spec);
+    const size_t lengths = layout::kLogicCodeLengths - layout::kConfig;
+    const size_t count = block[layout::kLogicCount - layout::kConfig];
+    CHECK_EQ(count, 2u);
+    CHECK_EQ(block[lengths], 0);
+    size_t code = 0;
+    for (size_t i = 1; i <= count; i++) {
+        CHECK(block[lengths + i] != 0);
+        code += block[lengths + i];
+    }
+    for (size_t i = count + 1; i < layout::kLogicChannels; i++) {
+        CHECK_EQ(block[lengths + i], 0);
+    }
+    const size_t stub = layout::kCompiledLogic - layout::kConfig + code;
+    CHECK_EQ(block[stub], 0x4F);
+    CHECK_EQ(block[stub + 1], 0x81);
+    CHECK_EQ(stub + 2 + 2, block.size());  // then only the CRC
+    // an unused output follows the zero channel, index 8 + count
+    const size_t rec2 = layout::kOutputConfig + layout::kOutputConfigBytes - layout::kConfig;
+    CHECK_EQ((block[rec2] << 8) | block[rec2 + 1], 8 + count);
+}
+
+TEST(config_too_many_rules_is_refused) {
+    ConfigSpec spec;
+    spec.rules.resize(layout::kLogicChannels - 2);  // channel 0, 198 rules, and the zero channel: all 200
+    CHECK_EQ(build_config(spec)[layout::kLogicCount - layout::kConfig], 199);
+    spec.rules.push_back(OutputRule{});
+    bool threw = false;
+    try {
+        build_config(spec);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    CHECK(threw);
 }
 
 namespace {
 
 // runs logic channel `channel`'s routine as the firmware would: JSR ,X at the compiled logic + the lengths up to it
-uint8_t run_routine(const std::vector<uint8_t>& block, size_t channel, uint8_t input1_raw) {
+// (`sets_debounce` false for the unused-channel routine, which leaves it alone)
+uint8_t run_routine(const std::vector<uint8_t>& block, size_t channel, uint8_t input1_raw, bool sets_debounce = true) {
     sim::test::FlatEnv env;
     for (size_t k = 0; k < block.size(); k++) {
         env.mem[layout::kConfig + k] = block[k];
@@ -59,7 +102,7 @@ uint8_t run_routine(const std::vector<uint8_t>& block, size_t channel, uint8_t i
     s.ccr = sim::ccr::kOnes | sim::ccr::kI;
     const sim::Stop stop = sim::interpret(s, env);
     CHECK(stop.kind == sim::StopKind::Wait);
-    CHECK_EQ(env.mem[0x42], 0);
+    CHECK_EQ(env.mem[0x42], sets_debounce ? 0 : 0x55);
     return s.a;
 }
 
@@ -73,7 +116,8 @@ TEST(config_logic_routines_compare_the_input) {
     CHECK_EQ(run_routine(block, 1, 29), 0);   // 5.8 V
     CHECK_EQ(run_routine(block, 1, 30), 0);   // 6.0 V: not above
     CHECK_EQ(run_routine(block, 1, 31), 1);   // 6.2 V
-    CHECK_EQ(run_routine(block, 2, 200), 0);  // the constant 0
+    CHECK_EQ(run_routine(block, 2, 200, false), 0);    // the first unused channel: the zero channel
+    CHECK_EQ(run_routine(block, 199, 200, false), 0);  // the last
 }
 
 TEST(config_current_cal_unity) {

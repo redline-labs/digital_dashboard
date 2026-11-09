@@ -2,9 +2,10 @@
 // current calibration (compiled in from a real unit's dump, config/current_cal.h) and a synthetic factory block.
 // They stand in for what PDM Manager downloads and what the factory programs.
 //
-// A logic routine is called with JSR ,X, reads channels through the channel-table pointer (layout::kZpChannelTable),
-// may set its debounce limit (layout::kZpDebounceHi/Lo), and returns the new state in A (bit 7 set: no result). That
-// calling convention is inferred from the caller, not checked against PDM Manager's compiler output.
+// A logic routine is called with JSR ,X and the channel's current state in A bit 0. It reads channels through the
+// channel-table pointer (layout::kZpChannelTable), sets its debounce limit (layout::kZpDebounceHi/Lo; nothing resets it
+// between channels) and returns the new state in A (bit 7 set: no result, the routine wrote its channel itself). PDM
+// Manager's code templates follow the same convention, and the unused channels are laid out as PDM Manager lays them.
 #pragma once
 
 #include <cstdint>

@@ -1,6 +1,7 @@
 #include "pdm32/config/config_builder.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -14,7 +15,11 @@ using sim::Hc08Asm;
 
 namespace {
 
-// a routine returning a constant (the CAN-TX-enable channel's 1, the unused channels' 0)
+// what every channel past the count runs, as PDM Manager emits it: CLRA; RTS. It leaves the debounce limit as the
+// previous channel set it, which does not matter for a result that never changes.
+constexpr std::array<uint8_t, 2> kUnusedChannelRoutine{0x4F, 0x81};
+
+// a routine returning a constant (the CAN-TX-enable channel's 1)
 std::vector<uint8_t> constant_routine(uint8_t value) {
     Hc08Asm a;
     a.clr_dir(layout::kZpDebounceHi);
@@ -111,23 +116,23 @@ ConfigSpec parse_config_spec(const nlohmann::json& j) {
 }
 
 std::vector<uint8_t> build_config(const ConfigSpec& spec) {
-    // the logic: channel 0 = 1 (enables CAN transmission), one channel per rule, then a constant 0 (the channels past
-    // the count re-run the last routine, so they read 0)
+    // the logic: channel 0 = 1 (enables CAN transmission), one channel per rule. As PDM Manager lays it out, the
+    // lengths step once more past the last routine to a CLRA; RTS and then stay 0, so every channel from the count on
+    // runs it and reads 0; the first of them is the zero channel the unused references point at.
     std::vector<std::vector<uint8_t>> routines;
     routines.push_back(constant_routine(1));
     for (const OutputRule& rule : spec.rules) {
         routines.push_back(input_above_routine(rule.input, rule.threshold_v));
     }
-    routines.push_back(constant_routine(0));
     const size_t count = routines.size();
-    if (count > layout::kLogicChannels) {
-        // The count is one byte in the block and every channel index past it would wrap.
+    if (count >= layout::kLogicChannels) {
+        // One channel must be left over to run the unused-channel routine and serve as the zero channel.
         throw std::runtime_error("config: " + std::to_string(spec.rules.size()) + " rules need more than " +
                                  std::to_string(layout::kLogicChannels) + " logic channels");
     }
-    const size_t zero_channel = 8 + count - 1;
+    const size_t zero_channel = 8 + count;
 
-    size_t code_bytes = 0;
+    size_t code_bytes = kUnusedChannelRoutine.size();
     for (const auto& r : routines) {
         code_bytes += r.size();
     }
@@ -166,7 +171,7 @@ std::vector<uint8_t> build_config(const ConfigSpec& spec) {
     }
 
     // logic channels: lengths are the pointer increments before each call
-    for (size_t i = 1; i < count; i++) {
+    for (size_t i = 1; i <= count; i++) {
         put8(image, uint16_t(layout::kLogicCodeLengths + i), uint8_t(routines[i - 1].size()));
     }
     put8(image, layout::kLogicCount, uint8_t(count));
@@ -193,6 +198,7 @@ std::vector<uint8_t> build_config(const ConfigSpec& spec) {
         std::copy(r.begin(), r.end(), image.data() + at);
         at += r.size();
     }
+    std::copy(kUnusedChannelRoutine.begin(), kUnusedChannelRoutine.end(), image.data() + at);
 
     seal(image, layout::kConfigFormat);
     return image;
