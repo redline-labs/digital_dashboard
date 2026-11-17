@@ -135,6 +135,106 @@ void test_command_framing()
           "a full buffer is not grown past what the device reads");
 }
 
+// The error generator. Layouts are PEAK's own field table for these opcodes;
+// none has been sent to a device yet, so these pin what we send, not that the
+// device agrees.
+void test_error_injection_commands()
+{
+    using can::ErrorInjection;
+    using can::pcan::build_error_injection_groups;
+
+    auto off = build_error_injection_groups(1, ErrorInjection::off());
+    check(off.has_value() && off->size() == 1, "turning it off is one command");
+    if (off.has_value() && off->size() == 1)
+    {
+        check(hex((*off)[0]) == "0F 10 00 00 00 00 00 00",
+              fmt::format("off is opcode 0x00F on channel 1: {}", hex((*off)[0])));
+    }
+
+    auto single = build_error_injection_groups(0, ErrorInjection::next_frame(0x2AB));
+    check(single.has_value() && single->size() == 1, "destroying the next frame is one command");
+    if (single.has_value() && single->size() == 1)
+    {
+        check(hex((*single)[0]) == "11 00 AB 02 00 00 00 00",
+              fmt::format("single shot is 0x011 with the bit position in bytes 2..3: {}",
+                          hex((*single)[0])));
+    }
+
+    auto targeted = build_error_injection_groups(
+        1, ErrorInjection::targeted(0x18DAF110, 0x155, 3, 0x1234, 7));
+    check(targeted.has_value() && targeted->size() == 2,
+          "a targeted injection is two groups, so part 1 lands before part 2");
+    if (targeted.has_value() && targeted->size() == 2)
+    {
+        check(hex((*targeted)[0]) == "0D 10 55 01 10 F1 DA 18",
+              fmt::format("part 1: bit position, then the 29-bit identifier: {}",
+                          hex((*targeted)[0])));
+        check(hex((*targeted)[1]) == "0E 10 07 00 03 00 34 12",
+              fmt::format("part 2: repeat, then destroyed, then passed: {}",
+                          hex((*targeted)[1])));
+        for (const auto& group : *targeted)
+        {
+            check(can::pcan::check_command_group(group).has_value(),
+                  "each part is a valid group on its own");
+        }
+    }
+
+    // Refused rather than masked: a masked bit position or identifier is a
+    // different, plausible request that the adapter would carry out.
+    check(!build_error_injection_groups(0, ErrorInjection::next_frame(0x400)).has_value(),
+          "a bit position past ten bits is refused");
+    check(!build_error_injection_groups(0, ErrorInjection::targeted(0x20000000, 0, 1))
+               .has_value(),
+          "an identifier past 29 bits is refused");
+    check(!build_error_injection_groups(0, ErrorInjection::targeted(0x123, 0, 0)).has_value(),
+          "a cycle that destroys nothing is refused");
+}
+
+// Controller options map onto the uCAN option bits PEAK's driver names, and
+// are set in the last start group, before the mode leaves reset.
+void test_controller_options()
+{
+    using can::ControllerOptions;
+    using can::pcan::option_masks;
+
+    check(option_masks({}).ucan == 0 && option_masks({}).usb == 0,
+          "the default options set no bits");
+    check(option_masks({ .selfAcknowledge = true }).ucan == can::pcan::kOptionSelfAck,
+          "self-acknowledge is uCAN 0x0040");
+    check(option_masks({ .classicFramesOnly = true }).ucan
+              == can::pcan::kOptionForceClassicFormat,
+          "classic frames only is uCAN 0x0010");
+    check(option_masks({ .ignoreBitrateSwitchFrames = true }).ucan == can::pcan::kOptionIgnoreBrs,
+          "ignoring BRS frames is uCAN 0x0080");
+    check(option_masks({ .timestampAtStartOfFrame = true }).ucan
+              == can::pcan::kOptionTimestampAtSof,
+          "start-of-frame timestamps are uCAN 0x0020");
+    check(option_masks({ .lowLatencyReceive = true }).usb == can::pcan::kOptionFastForward
+              && option_masks({ .lowLatencyReceive = true }).ucan == 0,
+          "low latency is the USB mask's fast-forward bit, 0x2000");
+
+    // Every bit an option can set is one a start clears, or an option turned
+    // off would stay on in the adapter.
+    const ControllerOptions all { true, true, true, true, true };
+    check((option_masks(all).ucan & ~can::pcan::kManagedOptionMasks.ucan) == 0
+              && (option_masks(all).usb & ~can::pcan::kManagedOptionMasks.usb) == 0,
+          "every option bit is one a start resets");
+
+    const auto plain = can::pcan::build_start_groups(0, false);
+    const auto chosen = can::pcan::build_start_groups(
+        0, false, ControllerOptions { .selfAcknowledge = true, .lowLatencyReceive = true });
+    check(plain[1] == chosen[1], "options leave the filter group alone");
+    check(chosen[2].size() == plain[2].size() + can::pcan::kCommandSize,
+          "requested options are one more command in the last group");
+    if (chosen[2].size() >= 16)
+    {
+        const std::span<const uint8_t> last(chosen[2]);
+        check(hex(last.subspan(last.size() - 16, 8)) == "0B 00 40 00 00 00 00 20",
+              fmt::format("set just before the mode: {}", hex(chosen[2])));
+        check(last[last.size() - 8] == 0x02, "and the mode is still last");
+    }
+}
+
 void test_command_groups()
 {
     using can::pcan::check_command_group;
@@ -145,14 +245,35 @@ void test_command_groups()
     for (const bool listenOnly : { false, true })
     {
         const auto groups = can::pcan::build_start_groups(1, listenOnly);
-        check(groups.size() == 2, "starting a channel is two groups");
+        check(groups.size() == 3, "starting a channel is three groups");
         for (const auto& group : groups)
         {
             check(check_command_group(group).has_value(),
                   fmt::format("a start group of {} bytes is one valid group", group.size()));
         }
-        check(groups[0].size() == can::pcan::kCommandBufferSize,
+        // Back to known defaults first and alone, so the two groups behind it
+        // are byte-for-byte what was confirmed on a Pro FD: the generator off,
+        // then every option this backend manages cleared.
+        check(hex(groups[0]) == "0F 10 00 00 00 00 00 00 0C 10 F0 00 00 00 00 20",
+              fmt::format("a start turns off the generator and resets the managed options "
+                          "a dead session may have left set: {}",
+                          hex(groups[0])));
+        check(groups[1].size() == can::pcan::kCommandBufferSize,
               "the pass-all filter fills a command buffer exactly");
+
+        // Calibration is cleared in the USB mask, bytes 6..7. Bytes 4..5, which
+        // PEAK's driver appeared to use, left a Pro FD sending them.
+        bool clearsCalibration = false;
+        for (size_t at = 0; at + 8 <= groups[2].size(); at += 8)
+        {
+            const auto* c = &groups[2][at];
+            if (c[0] == 0x0C && c[4] == 0 && c[5] == 0 && c[6] == 0x00 && c[7] == 0x80)
+            {
+                clearsCalibration = true;
+            }
+        }
+        check(clearsCalibration,
+              fmt::format("calibration is cleared with 0x8000 in bytes 6..7: {}", hex(groups[2])));
 
         // The mode command is last, so the controller leaves reset only after
         // everything else has been taken.
@@ -586,8 +707,8 @@ void test_status_and_error_records()
     put_u16(errorRecord, static_cast<uint16_t>(can::pcan::RecordType::Error));
     put_u32(errorRecord, 0);
     put_u32(errorRecord, 0);
-    errorRecord.push_back(1); // channel
-    errorRecord.push_back(0);
+    errorRecord.push_back(0xA1); // channel 1 in the low nibble, the rest uninterpreted
+    errorRecord.push_back(0x93);
     errorRecord.push_back(120); // tx errors
     errorRecord.push_back(64);  // rx errors
     auto errors = can::pcan::decode_records(errorRecord);
@@ -597,6 +718,8 @@ void test_status_and_error_records()
         check(errors.records[0].txErrorCounter == 120 && errors.records[0].rxErrorCounter == 64,
               "with both counters, which is what says whether a bus is degrading");
         check(errors.records[0].channel == 1, "on the right channel");
+        check(errors.records[0].errorTypeByte == 0xA1 && errors.records[0].errorCodeByte == 0x93,
+              "and the type and code bytes carried raw, until they are decoded from a capture");
     }
 
     // Overrun: the device dropped frames. A bridge that ignored this would
@@ -739,6 +862,8 @@ int main()
     test_opcode_channel_packing();
     test_command_framing();
     test_command_groups();
+    test_error_injection_commands();
+    test_controller_options();
     test_timing_slow_encoding();
     test_timing_field_widths();
     test_timing_fast_encoding();

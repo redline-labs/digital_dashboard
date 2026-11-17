@@ -7,6 +7,30 @@ namespace can
 
 Channel::~Channel() = default;
 
+ControllerOptions Channel::supported_controller_options() const
+{
+    return ControllerOptions {};
+}
+
+Result<void> Channel::set_controller_options(const ControllerOptions& options)
+{
+    if (auto missing = first_unsupported(options, supported_controller_options()))
+    {
+        return unsupported(description() + " does not support " + *missing);
+    }
+    return {};
+}
+
+ControllerOptions Channel::controller_options() const
+{
+    return ControllerOptions {};
+}
+
+Result<void> Channel::set_error_injection(const ErrorInjection& /*injection*/)
+{
+    return unsupported(description() + " cannot inject bus errors");
+}
+
 const char* to_string(BusState state)
 {
     switch (state)

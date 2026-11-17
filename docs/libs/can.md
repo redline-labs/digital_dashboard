@@ -28,7 +28,9 @@ transports on the other. The node that opens channels is
 
 | Header | |
 | --- | --- |
-| `can/channel.h` | `Channel`: configure, start, stop, `send`, `receive`, `statistics`; `BusState`, `Statistics`, and the threading contract. |
+| `can/channel.h` | `Channel`: configure, start, stop, `send`, `receive`, `statistics`, `set_controller_options`, `set_error_injection`; `BusState`, `Statistics`, and the threading contract. |
+| `can/controller_options.h` | `ControllerOptions` (self-acknowledge, classic frames only, ignore BRS frames, start-of-frame timestamps, low-latency receive) and `first_unsupported`. |
+| `can/error_injection.h` | `ErrorInjection` (`off`, `next_frame`, `targeted`) and `validate`: destroying frames on the bus on purpose. |
 | `can/backend.h` | `Backend` (`enumerate`, `open`), `OpenOptions`, and `Registry`, which a caller populates itself. |
 | `can/channel_id.h` | `ChannelId` and `parse_channel_id`: `socketcan:can0`, `pcan:0/1`, `virtual:a`; `ChannelInfo` for what a backend found. |
 | `can/bitrate.h` | `Bitrate` (what the caller wants), `BitTimingLimits` (what a controller can generate), `BitTiming` (the answer) and `solve_bit_timing`. |
@@ -110,6 +112,28 @@ transmitting onto a bus nobody is listening to. `Registry` is movable but not
 copyable: two registries holding the same PCAN backend would each think they
 could hand out its channels.
 
+**Controller options are opt-in per backend.** Every field of
+`ControllerOptions` defaults to what a controller does unasked, so every
+channel accepts the all-default set, and `set_controller_options()` refuses
+anything else with `Unsupported`, naming the option, unless the backend has
+said it can (`supported_controller_options()`). Like listen-only, a change to a
+running channel takes effect across a restart. Self-acknowledge lets a lone
+node's frames succeed on a bench, and is outside CAN's rules: it hides the
+missing-ACK fault an absent receiver would show, so it does not belong on a bus
+with other nodes. Classic-frames-only makes this node flag every FD frame as a
+format error.
+
+**Error injection is opt-in per backend.** `Channel::set_error_injection()` is
+not pure: its default answers `Unsupported`, and only a backend whose adapter
+can drive dominant bits onto the bus overrides it. Today that is
+[can_pcan](can_pcan.html). A channel that supports it still refuses with
+`InvalidState` while stopped or listen-only, except to turn injection off,
+which is always accepted. Requests are checked by `validate()` before any
+backend sees them, so a bit position or identifier too wide for the field is
+refused rather than masked into a different request the adapter would carry
+out. Every node on the bus sees the destroyed frames, not only the one under
+test; point it at a bench bus, never a vehicle.
+
 ## Tests
 
 ```bash
@@ -122,6 +146,7 @@ sample point lands where asked, that the FD data phase solves against its
 narrower limits, that impossible rates are refused, the whole DLC table both
 ways, channel-id parsing and round-tripping, and the virtual bus: delivery
 between channels, isolation between differently named buses, rejection of
-malformed frames, delivery across threads, and a registry reporting an unknown
+malformed frames, delivery across threads, error-injection validation and the
+`Unsupported` default, the controller-option defaults, and a registry reporting an unknown
 backend name as such. The `can` label is a regex match under `ctest -L`, so
 `-L can` also runs `can_trc` and `canopen`.

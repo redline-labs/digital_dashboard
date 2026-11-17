@@ -28,7 +28,8 @@ namespace can::pcan
 {
 
 // A PCAN USB interface carries at most this many CAN channels. The Pro FD uses
-// both, the USB FD one; the X6's six channels are three interfaces of two.
+// both, the USB FD one; the X6's six channels are assumed to be three
+// interfaces of two (unconfirmed, and doubtful -- see pcan_backend.cpp).
 inline constexpr uint8_t kChannelsPerInterface = 2;
 
 // Where decoded records go. Implemented by PcanChannel.

@@ -476,6 +476,70 @@ void test_virtual_bus_across_threads()
                       received));
 }
 
+// Error injection is opt-in per backend: a channel that has not said it can
+// must answer Unsupported, never succeed silently -- "the bus shrugged off the
+// errors" and "nothing was injected" would otherwise look the same.
+void test_error_injection_defaults_to_unsupported()
+{
+    auto registry = make_virtual_only_registry();
+    can::OpenOptions options;
+    options.bitrate.nominalBps = 500000;
+    auto channel = registry.open("virtual:inject", options);
+    check(channel.has_value(), "a virtual channel opens");
+    if (!channel.has_value())
+    {
+        return;
+    }
+    auto result = (*channel)->set_error_injection(can::ErrorInjection::next_frame(10));
+    check(!result.has_value() && result.error().kind == can::Error::Kind::Unsupported,
+          "a channel that cannot inject errors says Unsupported");
+}
+
+void test_controller_options_default_to_unsupported()
+{
+    check(!can::first_unsupported({}, {}).has_value(), "the defaults need no support");
+    check(can::first_unsupported({ .selfAcknowledge = true }, {}) == "self-acknowledge",
+          "an unsupported option is named");
+    check(!can::first_unsupported({ .selfAcknowledge = true }, { .selfAcknowledge = true })
+               .has_value(),
+          "a supported one is not");
+
+    auto registry = make_virtual_only_registry();
+    can::OpenOptions options;
+    options.bitrate.nominalBps = 500000;
+    auto channel = registry.open("virtual:options", options);
+    check(channel.has_value(), "a virtual channel opens");
+    if (!channel.has_value())
+    {
+        return;
+    }
+    check((*channel)->set_controller_options({}).has_value(),
+          "every channel accepts the default options");
+    auto refused = (*channel)->set_controller_options({ .lowLatencyReceive = true });
+    check(!refused.has_value() && refused.error().kind == can::Error::Kind::Unsupported
+              && refused.error().message.find("low-latency-receive") != std::string::npos,
+          "and refuses one it cannot do, by name");
+}
+
+void test_error_injection_validation()
+{
+    using can::ErrorInjection;
+    check(can::validate(ErrorInjection::off()).has_value(), "off is always valid");
+    check(can::validate(ErrorInjection::next_frame(can::kMaxErrorInjectionBitPosition))
+              .has_value(),
+          "the last bit position is valid");
+    check(!can::validate(ErrorInjection::next_frame(can::kMaxErrorInjectionBitPosition + 1))
+               .has_value(),
+          "one past it is not");
+    check(can::validate(ErrorInjection::targeted(0x1FFFFFFF, 0, 1)).has_value(),
+          "a full 29-bit identifier is valid");
+    auto wide = can::validate(ErrorInjection::targeted(0x20000000, 0, 1));
+    check(!wide.has_value() && wide.error().kind == can::Error::Kind::InvalidArgument,
+          "a 30-bit identifier is an invalid argument");
+    check(!can::validate(ErrorInjection::targeted(0x100, 0, 0)).has_value(),
+          "a cycle that destroys nothing is refused");
+}
+
 void test_registry_reports_unknown_backends()
 {
     auto registry = make_virtual_only_registry();
@@ -513,6 +577,9 @@ int main()
     test_virtual_bus_rejects_bad_frames();
     test_virtual_bus_across_threads();
     test_registry_reports_unknown_backends();
+    test_error_injection_defaults_to_unsupported();
+    test_error_injection_validation();
+    test_controller_options_default_to_unsupported();
 
     if (failures != 0)
     {

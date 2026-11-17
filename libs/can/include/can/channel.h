@@ -16,7 +16,9 @@
 
 #include "can/bitrate.h"
 #include "can/channel_id.h"
+#include "can/controller_options.h"
 #include "can/error.h"
+#include "can/error_injection.h"
 
 #include "helpers/can_frame.h"
 
@@ -101,6 +103,15 @@ public:
     virtual Result<void> set_listen_only(bool listenOnly) = 0;
     virtual bool listen_only() const = 0;
 
+    // Controller behaviours beyond the above (can/controller_options.h). Not
+    // pure: the defaults answer that only the all-default set is supported,
+    // and set_controller_options() refuses anything else with Unsupported,
+    // naming the option. Like listen-only, a change to a running channel
+    // takes effect across a restart.
+    virtual ControllerOptions supported_controller_options() const;
+    virtual Result<void> set_controller_options(const ControllerOptions& options);
+    virtual ControllerOptions controller_options() const;
+
     // --- lifecycle ----------------------------------------------------------
     virtual Result<void> start() = 0;
     virtual Result<void> stop() = 0;
@@ -118,6 +129,14 @@ public:
     virtual Result<size_t> receive(std::span<helpers::CanFrame> out, Duration timeout) = 0;
 
     virtual Statistics statistics() const = 0;
+
+    // --- fault injection ----------------------------------------------------
+    //
+    // Destroys frames on the bus (can/error_injection.h). Not pure: almost no
+    // adapter can do it, and this answers Unsupported for every one that has
+    // not said otherwise. A channel that supports it still refuses while
+    // stopped or listen-only, with InvalidState.
+    virtual Result<void> set_error_injection(const ErrorInjection& injection);
 
 protected:
     Channel() = default;

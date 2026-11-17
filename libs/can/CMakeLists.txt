@@ -20,8 +20,10 @@ add_library(can STATIC
     src/bitrate.cpp
     src/channel.cpp
     src/channel_id.cpp
+    src/controller_options.cpp
     src/dlc.cpp
     src/error.cpp
+    src/error_injection.cpp
     src/virtual_backend.cpp
 )
 

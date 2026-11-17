@@ -35,6 +35,14 @@
 //   PUCAN_OPTION_ERROR was never enabled, so the device sent no error records
 //   and the error counters, bus state and bus-off count could not move.
 //
+// The error generator and the option bits beyond the three Linux names come
+// from a second source: the command description table PEAK's Windows driver
+// (PCAN_USB.SYS 5.1.5) carries for its own tracing, read field by field, and
+// the code in that driver that builds the commands. Where the two sources
+// disagree it is said beside the constant. The generator and self-ack were
+// confirmed on a Pro FD against a MoTeC UTC on 2026-11-17; the other options
+// were accepted there, with no effect a classic-only bus could show.
+//
 // The lesson worth keeping: every one of those failed SILENTLY. There is no
 // error path in this protocol for "your timing is wrong" -- the controller
 // simply never wins arbitration, and a bus with a working cable, a working
@@ -50,6 +58,8 @@
 #include "can/bitrate.h"
 #include "can/channel.h"
 #include "can/error.h"
+#include "can/controller_options.h"
+#include "can/error_injection.h"
 
 #include "helpers/can_frame.h"
 
@@ -68,6 +78,11 @@ inline constexpr uint16_t kPeakVendorId = 0x0c72;
 
 inline constexpr uint16_t kProductUsbFd = 0x0012;   // PCAN-USB FD, 1 channel
 inline constexpr uint16_t kProductUsbProFd = 0x0011; // PCAN-USB Pro FD, 2 channels
+// The X6 is not driven, only named: PEAK's driver binds the whole device, not
+// an interface, and its device-info record carries a "slot of USB chip module"
+// (0..2) and a per-module controller count of 1 or 2. That reads as three
+// two-channel devices told apart by slot, not one device with three
+// interfaces -- which is what the channel mapping in pcan_backend.cpp assumes.
 inline constexpr uint16_t kProductUsbX6 = 0x0014;   // PCAN-USB X6, 6 channels
 inline constexpr uint16_t kProductUsbChip = 0x0013; // PCAN-Chip USB, 1 channel
 
@@ -164,9 +179,17 @@ enum class Opcode : uint16_t
     WriteErrorCounters = 0x00a,
     SetEnableOption = 0x00b,
     ClearDisableOption = 0x00c,
-    // 0x00d is reserved; the barrier is 0x010. Getting this wrong sends a
-    // command the device does not implement, which it ignores in silence.
+    // The error generator: six dominant bits at a chosen bit of a frame. The
+    // targeted form is two commands, and PEAK's driver sends part 1 first, as
+    // its own transfer, then part 2. See append_error_injection().
+    SetErrorGenerator1 = 0x00d,
+    SetErrorGenerator2 = 0x00e,
+    DisableErrorGenerator = 0x00f,
+    // The barrier is 0x010 and the single-shot generator 0x011. Getting an
+    // opcode wrong sends a command the device does not implement, which it
+    // ignores in silence.
     RxBarrier = 0x010,
+    ErrorGeneratorSingle = 0x011,
 
     // Extensions specific to the PCAN-USB FD family.
     ClockSet = 0x080,
@@ -204,6 +227,15 @@ void append_clock(std::vector<uint8_t>& buffer, uint8_t channel, uint8_t clockSe
 void append_options(std::vector<uint8_t>& buffer, uint8_t channel, bool enable, uint16_t ucanMask,
                     uint16_t usbMask);
 void append_std_filter_pass_all(std::vector<uint8_t>& buffer, uint8_t channel);
+
+// The error generator as command GROUPS, one per transfer, in the order they
+// must be sent. Off and NextFrame are one command; Targeted is two, and part 1
+// (identifier and bit position) must reach the device before part 2 (the
+// destroy/pass cycle), so they are separate groups exactly as PEAK sends them.
+// The request is validated first (can::validate), so nothing is masked into a
+// different value.
+Result<std::vector<std::vector<uint8_t>>> build_error_injection_groups(
+    uint8_t channel, const ErrorInjection& injection);
 void append_led(std::vector<uint8_t>& buffer, uint8_t channel, uint8_t mode);
 
 // Terminates a built-up command buffer, when there is room for the terminator.
@@ -217,9 +249,17 @@ void finish_command_buffer(std::vector<uint8_t>& buffer, size_t bufferSize = kCo
 Result<void> check_command_group(std::span<const uint8_t> group);
 
 // What starting a channel sends, as the groups the reference driver sends it
-// in: the pass-all filter (whose 64 rows fill a buffer exactly), then error
-// reporting on, calibration traffic off, and the mode that leaves reset.
-std::vector<std::vector<uint8_t>> build_start_groups(uint8_t channel, bool listenOnly);
+// in: the error generator off (a session that died with it on leaves it on,
+// and the adapter keeps destroying frames for nobody), the pass-all filter
+// (whose 64 rows fill a buffer exactly), then error reporting on, calibration
+// traffic off, and the mode that leaves reset.
+//
+// Controller options are reset to their defaults in the first group, beside
+// the generator, and any requested are set in the last, before the mode: the
+// adapter keeps options across sessions too. With the default options the
+// last two groups are exactly those confirmed on a Pro FD.
+std::vector<std::vector<uint8_t>> build_start_groups(uint8_t channel, bool listenOnly,
+                                                     const ControllerOptions& options = {});
 
 // The clock selector for ClockSet. 80 MHz is the default and the only one the
 // bit-timing limits above describe.
@@ -233,7 +273,16 @@ inline constexpr uint8_t kClock20MHz = 5;
 // Option bits for SetEnableOption / ClearDisableOption. The calibration
 // messages are the device's own timestamp synchronisation traffic; leaving
 // them on means a stream of records nothing wants.
+//
+// Cleared in the USB mask (bytes 6..7), as Linux's peak_usb does. Reading
+// PEAK's driver suggested bytes 4..5; a Pro FD ignores that and keeps sending
+// one a second -- even while no channel is open, so they pile up in the
+// adapter until the next session drains them.
 inline constexpr uint16_t kOptionCalibrationMessages = 0x8000;
+// An immediate USB transfer per CAN frame rather than waiting to fill one.
+// ControllerOptions::lowLatencyReceive.
+inline constexpr uint16_t kOptionFastForward = 0x2000;
+inline constexpr uint16_t kOptionDebugOutput = 0x4000;
 
 // uCAN option bits, which go in the OTHER mask of the same command. Error
 // reporting is off until it is asked for: without this the device sends no
@@ -242,6 +291,33 @@ inline constexpr uint16_t kOptionCalibrationMessages = 0x8000;
 inline constexpr uint16_t kOptionError = 0x0001;
 inline constexpr uint16_t kOptionBusLoad = 0x0002;
 inline constexpr uint16_t kOptionCanFdNonIso = 0x0004;
+// The rest of the uCAN mask as PEAK's driver describes it. These are what
+// can::ControllerOptions maps to (option_masks()).
+// Receive only classic frames: a recessive r0 does not switch to FD.
+inline constexpr uint16_t kOptionForceClassicFormat = 0x0010;
+// Timestamp at start of frame rather than the default end of frame.
+inline constexpr uint16_t kOptionTimestampAtSof = 0x0020;
+// Acknowledge as transmitter too -- a lone node's frames get an ACK.
+inline constexpr uint16_t kOptionSelfAck = 0x0040;
+// Ignore BRS frames and wait for bus idle.
+inline constexpr uint16_t kOptionIgnoreBrs = 0x0080;
+
+// Which uCAN and USB mask bits a set of controller options turns on. Not
+// carried: FD non-ISO (PEAK has both an option bit and a separate stored
+// ISO-mode command, and which polarity the bit has is not settled), bus load
+// reporting (wants decoding before it is worth asking for), and the debug and
+// calibration bits, which are the adapter's own.
+struct OptionMasks
+{
+    uint16_t ucan { 0 };
+    uint16_t usb { 0 };
+};
+OptionMasks option_masks(const ControllerOptions& options);
+// Every bit option_masks() can set; what a start clears.
+inline constexpr OptionMasks kManagedOptionMasks {
+    .ucan = kOptionForceClassicFormat | kOptionTimestampAtSof | kOptionSelfAck | kOptionIgnoreBrs,
+    .usb = kOptionFastForward,
+};
 
 // The 11-bit acceptance filter is 64 rows of 32 identifiers. "Pass everything"
 // means writing every row -- one row with an all-ones mask passes identifiers
@@ -297,6 +373,13 @@ struct Record
     // Valid when type is Error.
     uint8_t rxErrorCounter { 0 };
     uint8_t txErrorCounter { 0 };
+    // The two bytes Linux names channel_type_d and code_g, carried RAW. On a
+    // Pro FD the type byte was channel (low nibble), kind (bits 4..6: 0 bit,
+    // 2 stuff, 3 ACK, 4 a counter going down) and bit 7 set when receiving.
+    // The code byte is not understood, and nothing seen marks an error as the
+    // generator's own, so neither is decoded yet.
+    uint8_t errorTypeByte { 0 };
+    uint8_t errorCodeByte { 0 };
 
     // Valid when type is Overrun: the device dropped frames.
     bool overrun { false };

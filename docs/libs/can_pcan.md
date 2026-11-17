@@ -60,9 +60,11 @@ interface, reference-counted by the channels handed out of it: opening
 the device closes when the last channel does. One reader thread per device
 demultiplexes records into per-channel queues.
 
-The X6 is six channels behind three USB interfaces of two, so channel 4 is
-interface 2's local channel 0. That mapping is the part most likely to need
-adjusting against real hardware; no X6 has been tried.
+The X6 is assumed to be six channels behind three USB interfaces of two, so
+channel 4 is interface 2's local channel 0. No X6 has been tried, and PEAK's
+Windows driver suggests the assumption is wrong: it binds the X6 as a whole
+device and reads a module slot (0 to 2) from the device-info record, which
+looks like three two-channel devices. The X6 is not a supported target.
 
 {: .warning }
 On Linux the in-tree `peak_usb` driver claims a PCAN adapter at plug-in, and
@@ -95,18 +97,24 @@ it is wrong there is no way to resynchronise inside the buffer, and guessing
 would turn one bad transfer into a stream of plausible nonsense. Everything
 decoded before the bad record is still returned.
 
-Opcode `0x00d` is reserved and the barrier is `0x010`; a command the device
-does not implement is ignored in silence. Commands are eight bytes each. A
+Opcodes `0x00d` to `0x00f` and `0x011` are the error generator (below) and
+the barrier is `0x010`; a command the device does not implement is ignored in
+silence. Commands are eight bytes each. A
 group of them goes in one transfer of at most 512 bytes (64 on a low-speed
 link), terminated by an end-of-collection marker when there is room, and not
 padded. The "driver loaded" vendor request is what takes the adapter out of
 its idle state; without it nothing answers on the bulk endpoints. Calibration
 messages are the device's own timestamp traffic and are switched off, or they
-arrive as a stream of records nothing wants.
+arrive as a stream of records nothing wants: one a second, sent even while no
+channel is open, so a session that leaves them on hands the next one a backlog.
+Switching them off puts the `0x8000` bit in the USB mask, bytes 6 to 7 of the
+clear command, as Linux's `peak_usb` does. The disassembly of PEAK's Windows
+driver suggested bytes 4 to 5; a Pro FD ignores that.
 
-**A command group is never split across transfers.** Starting a channel is two
-groups: the 64-row pass-all filter, which fills a buffer exactly, then the
-options and the mode. When the filter and the rest went out as one 536-byte
+**A command group is never split across transfers.** Starting a channel is three
+groups: the error generator off and the managed options cleared, then the
+64-row pass-all filter, which fills
+a buffer exactly, then the options and the mode. When the filter and the rest went out as one 536-byte
 transfer, a PCAN-USB Pro FD on macOS was left in reset. It was silent and
 acknowledged nothing, and no error appeared anywhere. `check_command_group()`
 is what `send_commands()` enforces, and `build_start_groups()` is unit-tested
@@ -122,6 +130,76 @@ that a Pro FD stopped answering even control requests until it was replugged.
 An unplug ends every posted read, and the first to see it tells each open
 channel.
 
+## Controller options
+
+The PCAN backend supports every field of `can::ControllerOptions`. They map to
+the uCAN option bits PEAK's driver names: self-acknowledge `0x0040`, classic
+frames only `0x0010`, ignore BRS frames `0x0080`, start-of-frame timestamps
+`0x0020`, and low-latency receive the USB mask's fast-forward bit `0x2000`.
+A start clears all five, because the adapter keeps them across sessions, and
+then sets the requested ones just before the mode command; with the default
+options the filter and option groups are unchanged.
+
+Self-acknowledge was checked on a Pro FD with nothing else acknowledging: off,
+the transmit error counter climbs by eight to 128 and every attempt is an ACK
+error; on, each frame succeeds and the counter steps back down. The other four
+were accepted with classic traffic passing both ways, but a bus with no FD
+nodes cannot show what they change. FD non-ISO is not offered: PEAK has an option bit and a separate,
+stored ISO-mode command, and the bit's polarity is not settled.
+
+## Error generator
+
+`Channel::set_error_injection()` drives the adapter's error generator, which
+destroys frames with six consecutive dominant bits; see [can](can.html) for the
+interface. The command layouts come from the description table in PEAK's
+Windows driver and from the code there that builds them, and were confirmed on
+a Pro FD at 1 Mbit/s against a MoTeC UTC.
+
+| Request | Commands |
+| --- | --- |
+| `off()` | `0x00f` |
+| `next_frame(bit)` | `0x011`, the bit position in the low ten bits of bytes 2 to 3 |
+| `targeted(id, bit, destroy, pass, repeat)` | `0x00d` (bit position, then the 29-bit identifier in bytes 4 to 7), then `0x00e` (repeat count in byte 2, destroyed in bytes 4 to 5, passed in 6 to 7) |
+
+The targeted form's two commands go out as two transfers, part 1 first, as
+PEAK's driver sends them. PEAK's driver always sends a repeat count of zero,
+which means until turned off. Starting a channel turns the generator off first,
+in a group of its own, because a session that died with it running leaves it
+running on the adapter; stopping a channel that turned it on turns it off.
+
+What the bench showed:
+
+- `next_frame` destroys exactly one frame. The sender retransmits it, so a
+  receiver still gets every message.
+- `targeted` with destroy 1 and pass 2 passed two frames, destroyed the
+  third, and repeated. Passing comes first, and a retransmission counts as a
+  frame, so this is one attempt in three, not one message in three.
+- An 11-bit identifier matches as written (`0x456`); `0x457` destroyed
+  nothing.
+- The adapter destroys its own transmissions too. Each costs it eight on its
+  transmit error counter, so a steady diet of them takes it error-passive.
+- **Error counters survive a restart.** Starting a channel does not clear
+  them, so a session can begin error-passive because of the one before; only
+  successful traffic brings them down.
+- **Passing zero destroys every matching frame** until turned off, and the
+  sender goes bus-off.
+
+On a frame from another node, a generated error arrives as an ordinary stuff
+error seen while receiving; on the adapter's own frame, as a bit error seen
+while transmitting. Nothing in the record marks it as the generator's. The
+type byte was the channel in its low nibble, the kind in bits 4 to 6 (0 bit,
+2 stuff, 3 ACK, 4 a counter going down) and bit 7 when receiving; the code
+byte is not understood. Both are carried raw in `Record::errorTypeByte` and
+`errorCodeByte` and logged at trace level.
+
+Not yet known: where the bit position counts from, and whether it includes
+stuff bits. Only bit 20 has been tried.
+
+On the Pro FD tested, channel 1 with nothing on its bus reported every ACK
+error with the receive counter at 136 and the transmit counter at 0, unchanging
+from the first record; channel 0 in the same test counted as CAN says. Not
+explained.
+
 ## Tests
 
 ```bash
@@ -132,7 +210,8 @@ ctest --test-dir build -L pcan       # can_pcan_test_pucan
 throughout: build a command and inspect what came out, hand-assemble a record
 and see what comes back. It covers the product table, opcode-and-channel
 packing, command framing and padding, the slow and fast timing encodings and
-their field widths, the option and filter commands, firmware-info decoding in
+their field widths, the option and filter commands, the error-generator
+commands and the requests they refuse, the calibration-clear layout, the controller-option bits, firmware-info decoding in
 both record forms, receive decoding, several records in one transfer, a
 malformed record stopping the walk, status and error records, transmit
 encoding, the FD flags and lengths, and the frames `append_tx_frame` refuses.

@@ -105,6 +105,40 @@ public:
 
     bool listen_only() const override { return listenOnly_; }
 
+    ControllerOptions supported_controller_options() const override
+    {
+        return ControllerOptions {
+            .selfAcknowledge = true,
+            .classicFramesOnly = true,
+            .ignoreBitrateSwitchFrames = true,
+            .timestampAtStartOfFrame = true,
+            .lowLatencyReceive = true,
+        };
+    }
+
+    Result<void> set_controller_options(const ControllerOptions& options) override
+    {
+        if (auto missing = first_unsupported(options, supported_controller_options()))
+        {
+            return unsupported(fmt::format("{} does not support {}", description_, *missing));
+        }
+        controllerOptions_ = options;
+        SPDLOG_INFO("[pcan] {}: controller options {}", id_.toString(), to_string(options));
+        if (running_)
+        {
+            // Options are sent as the controller leaves reset, like the mode.
+            auto stopped = stop();
+            if (!stopped.has_value())
+            {
+                return stopped;
+            }
+            return start();
+        }
+        return {};
+    }
+
+    ControllerOptions controller_options() const override { return controllerOptions_; }
+
     // --- lifecycle ----------------------------------------------------------
 
     Result<void> start() override
@@ -122,7 +156,7 @@ public:
 
         // One transfer per group: the filter alone fills a command buffer,
         // and a group cut across transfers is not taken (pucan.h).
-        for (auto& group : build_start_groups(localChannel_, listenOnly_))
+        for (auto& group : build_start_groups(localChannel_, listenOnly_, controllerOptions_))
         {
             auto sent = device_->send_commands(std::move(group));
             if (!sent.has_value())
@@ -144,6 +178,19 @@ public:
         if (!running_)
         {
             return {};
+        }
+
+        // A generator left on outlives this process on the adapter, so it is
+        // turned off before the controller goes to reset. Only when it was
+        // turned on, so a plain stop sends what it always has.
+        if (injecting_.exchange(false))
+        {
+            auto off = set_error_injection(ErrorInjection::off());
+            if (!off.has_value())
+            {
+                SPDLOG_WARN("[pcan] {}: could not turn the error generator off: {}",
+                            id_.toString(), to_string(off.error()));
+            }
         }
 
         std::vector<uint8_t> commands;
@@ -236,6 +283,54 @@ public:
         return statistics_;
     }
 
+    // --- fault injection ----------------------------------------------------
+
+    Result<void> set_error_injection(const ErrorInjection& injection) override
+    {
+        if (lost_)
+        {
+            return not_found(fmt::format("{} was unplugged", id_.toString()));
+        }
+        // Turning it off is always allowed: it is the way out.
+        if (injection.mode != ErrorInjection::Mode::Off)
+        {
+            if (!running_)
+            {
+                return invalid_state(fmt::format("{} is not running", id_.toString()));
+            }
+            // Six dominant bits is a transmission. Listen-only promises none.
+            if (listenOnly_)
+            {
+                return invalid_state(fmt::format(
+                    "{} is listen-only and cannot inject errors", id_.toString()));
+            }
+        }
+
+        auto groups = build_error_injection_groups(localChannel_, injection);
+        if (!groups.has_value())
+        {
+            return std::unexpected(groups.error());
+        }
+        // In order, one transfer each: the targeted form's part 1 must arrive
+        // before part 2.
+        for (auto& group : *groups)
+        {
+            auto sent = device_->send_commands(std::move(group));
+            if (!sent.has_value())
+            {
+                return sent;
+            }
+        }
+
+        injecting_ = injection.mode != ErrorInjection::Mode::Off;
+        SPDLOG_WARN("[pcan] {}: error injection {} (bit {}, id 0x{:X}, destroy {}, pass {}, "
+                    "repeat {})",
+                    id_.toString(), to_string(injection.mode), injection.bitPosition,
+                    injection.identifier, injection.destroyCount, injection.passCount,
+                    injection.repeatCount);
+        return {};
+    }
+
     // --- from the device's reader thread ------------------------------------
 
     void on_device_lost() override
@@ -275,6 +370,11 @@ public:
                 break;
 
             case RecordType::Error:
+                // Not decoded yet; docs/libs/can_pcan.md has what the type byte
+                // was seen to mean on a Pro FD.
+                SPDLOG_TRACE("[pcan] {}: error record type 0x{:02X} code 0x{:02X} tx {} rx {}",
+                             id_.toString(), record.errorTypeByte, record.errorCodeByte,
+                             record.txErrorCounter, record.rxErrorCounter);
                 statistics_.rxErrorCounter = record.rxErrorCounter;
                 statistics_.txErrorCounter = record.txErrorCounter;
                 statistics_.errorFrames++;
@@ -286,10 +386,15 @@ public:
                 statistics_.rxDropped++;
                 break;
 
+            case RecordType::Calibration:
+                // Start-up asks for these to stop; one arriving means that
+                // request was not understood.
+                SPDLOG_TRACE("[pcan] {}: calibration record", id_.toString());
+                break;
+
             case RecordType::CanTx:
             case RecordType::BusLoad:
             case RecordType::CacheCritical:
-            case RecordType::Calibration:
                 break;
             }
         }
@@ -348,7 +453,12 @@ private:
 
     Bitrate bitrate_;
     std::atomic<bool> listenOnly_ { false };
+    // Like the bit rate: written only from the configuring thread.
+    ControllerOptions controllerOptions_ {};
     std::atomic<bool> running_ { false };
+    // A NextFrame request has fired once and is spent, but nothing reports
+    // that, so any non-Off request counts as on until turned off.
+    std::atomic<bool> injecting_ { false };
     // Set by the device when the adapter is unplugged. Never cleared: a
     // replugged adapter is a new device, reached by opening the channel again.
     std::atomic<bool> lost_ { false };
@@ -366,7 +476,10 @@ private:
 // A PCAN-USB X6 is six CAN channels behind three USB interfaces of two, so
 // channel 4 is interface 2's local channel 0. The one- and two-channel products
 // are all interface 0. This mapping is the piece most in need of confirmation
-// against a real X6.
+// against a real X6 -- and PEAK's own driver suggests it is wrong: it binds
+// the X6 as a whole device and reads a module slot (0..2) from the device-info
+// record, which looks like three two-channel devices, not one with three
+// interfaces. The X6 is not a supported target; this is noted, not fixed.
 struct ChannelLocation
 {
     uint8_t usbInterface { 0 };

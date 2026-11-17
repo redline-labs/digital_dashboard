@@ -255,6 +255,51 @@ void append_std_filter_pass_all(std::vector<uint8_t>& buffer, uint8_t channel)
     }
 }
 
+Result<std::vector<std::vector<uint8_t>>> build_error_injection_groups(
+    uint8_t channel, const ErrorInjection& injection)
+{
+    auto valid = validate(injection);
+    if (!valid.has_value())
+    {
+        return std::unexpected(valid.error());
+    }
+
+    std::vector<std::vector<uint8_t>> groups;
+    switch (injection.mode)
+    {
+    case ErrorInjection::Mode::Off:
+        groups.emplace_back();
+        append_command(groups.back(), channel, Opcode::DisableErrorGenerator);
+        break;
+
+    case ErrorInjection::Mode::NextFrame:
+        groups.emplace_back();
+        put_u16(groups.back(), opcode_channel(channel, Opcode::ErrorGeneratorSingle));
+        put_u16(groups.back(), injection.bitPosition);
+        put_u32(groups.back(), 0);
+        break;
+
+    case ErrorInjection::Mode::Targeted:
+        // Part 1: bit position in the low ten bits of bytes 2..3, identifier
+        // in the low 29 bits of bytes 4..7.
+        groups.emplace_back();
+        put_u16(groups.back(), opcode_channel(channel, Opcode::SetErrorGenerator1));
+        put_u16(groups.back(), injection.bitPosition);
+        put_u32(groups.back(), injection.identifier);
+        // Part 2: repeat count in byte 2, destroyed frames in bytes 4..5,
+        // passed frames in 6..7. PEAK's own driver always sends a repeat
+        // count of 0, so a non-zero one has never been exercised by anyone.
+        groups.emplace_back();
+        put_u16(groups.back(), opcode_channel(channel, Opcode::SetErrorGenerator2));
+        groups.back().push_back(injection.repeatCount);
+        groups.back().push_back(0);
+        put_u16(groups.back(), injection.destroyCount);
+        put_u16(groups.back(), injection.passCount);
+        break;
+    }
+    return groups;
+}
+
 void append_led(std::vector<uint8_t>& buffer, uint8_t channel, uint8_t mode)
 {
     const uint8_t args[6] = { mode, 0, 0, 0, 0, 0 };
@@ -293,24 +338,47 @@ Result<void> check_command_group(std::span<const uint8_t> group)
     return {};
 }
 
-std::vector<std::vector<uint8_t>> build_start_groups(uint8_t channel, bool listenOnly)
+OptionMasks option_masks(const ControllerOptions& options)
 {
-    std::vector<std::vector<uint8_t>> groups(2);
+    OptionMasks masks;
+    if (options.selfAcknowledge) masks.ucan |= kOptionSelfAck;
+    if (options.classicFramesOnly) masks.ucan |= kOptionForceClassicFormat;
+    if (options.ignoreBitrateSwitchFrames) masks.ucan |= kOptionIgnoreBrs;
+    if (options.timestampAtStartOfFrame) masks.ucan |= kOptionTimestampAtSof;
+    if (options.lowLatencyReceive) masks.usb |= kOptionFastForward;
+    return masks;
+}
+
+std::vector<std::vector<uint8_t>> build_start_groups(uint8_t channel, bool listenOnly,
+                                                     const ControllerOptions& options)
+{
+    std::vector<std::vector<uint8_t>> groups(3);
+
+    // Back to known defaults -- generator off, managed options cleared -- in
+    // a group of its own, ahead of the two below, so with default options
+    // those stay byte-for-byte what was confirmed on a Pro FD. Not yet
+    // confirmed itself.
+    append_command(groups[0], channel, Opcode::DisableErrorGenerator);
+    append_options(groups[0], channel, false, kManagedOptionMasks.ucan, kManagedOptionMasks.usb);
 
     // Pass everything: filtering belongs to whoever reads the topic, and a
     // filter set here would be invisible to them.
-    append_std_filter_pass_all(groups[0], channel);
+    append_std_filter_pass_all(groups[1], channel);
 
     // Error reporting is OFF until asked for. Without it the device sends no
     // error records at all, so errorFrames, the error counters and every bus
     // state above ErrorActive stay at their initial values however badly the
     // bus is behaving.
-    append_options(groups[1], channel, true, kOptionError, 0);
-    // The adapter's timestamp-calibration traffic is a record per frame of
-    // overhead. Cleared separately: enabling and disabling are different
-    // opcodes.
-    append_options(groups[1], channel, false, 0, kOptionCalibrationMessages);
-    append_command(groups[1], channel, listenOnly ? Opcode::ListenOnlyMode : Opcode::NormalMode);
+    append_options(groups[2], channel, true, kOptionError, 0);
+    // The adapter's timestamp-calibration traffic: a record a second that
+    // nothing reads.
+    append_options(groups[2], channel, false, 0, kOptionCalibrationMessages);
+    const OptionMasks requested = option_masks(options);
+    if (requested.ucan != 0 || requested.usb != 0)
+    {
+        append_options(groups[2], channel, true, requested.ucan, requested.usb);
+    }
+    append_command(groups[2], channel, listenOnly ? Opcode::ListenOnlyMode : Opcode::NormalMode);
 
     return groups;
 }
@@ -455,6 +523,8 @@ DecodeResult decode_records(std::span<const uint8_t> buffer)
             }
             decoded.timestampUs = get_timestamp(record, 4);
             decoded.channel = static_cast<uint8_t>(record[12] & 0x0F);
+            decoded.errorTypeByte = record[12];
+            decoded.errorCodeByte = record[13];
             decoded.txErrorCounter = record[14];
             decoded.rxErrorCounter = record[15];
             break;
