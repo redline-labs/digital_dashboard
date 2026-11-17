@@ -237,6 +237,16 @@ void append_options(std::vector<uint8_t>& buffer, uint8_t channel, bool enable, 
     put_u16(buffer, usbMask);
 }
 
+void append_write_error_counters(std::vector<uint8_t>& buffer, uint8_t channel,
+                                 uint8_t txCounter, uint8_t rxCounter)
+{
+    put_u16(buffer, opcode_channel(channel, Opcode::WriteErrorCounters));
+    put_u16(buffer, kWriteTxErrorCounter | kWriteRxErrorCounter);
+    buffer.push_back(txCounter);
+    buffer.push_back(rxCounter);
+    put_u16(buffer, 0);
+}
+
 void append_std_filter_pass_all(std::vector<uint8_t>& buffer, uint8_t channel)
 {
     // The 11-bit acceptance filter is a bitmap the device consults before
@@ -354,12 +364,11 @@ std::vector<std::vector<uint8_t>> build_start_groups(uint8_t channel, bool liste
 {
     std::vector<std::vector<uint8_t>> groups(3);
 
-    // Back to known defaults -- generator off, managed options cleared -- in
-    // a group of its own, ahead of the two below, so with default options
-    // those stay byte-for-byte what was confirmed on a Pro FD. Not yet
-    // confirmed itself.
+    // Back to known defaults -- generator off, managed options cleared, error
+    // counters zeroed -- in a group of its own, ahead of the two below.
     append_command(groups[0], channel, Opcode::DisableErrorGenerator);
     append_options(groups[0], channel, false, kManagedOptionMasks.ucan, kManagedOptionMasks.usb);
+    append_write_error_counters(groups[0], channel, 0, 0);
 
     // Pass everything: filtering belongs to whoever reads the topic, and a
     // filter set here would be invisible to them.

@@ -112,7 +112,8 @@ clear command, as Linux's `peak_usb` does. The disassembly of PEAK's Windows
 driver suggested bytes 4 to 5; a Pro FD ignores that.
 
 **A command group is never split across transfers.** Starting a channel is three
-groups: the error generator off and the managed options cleared, then the
+groups: the error generator off, the managed options cleared and the error
+counters zeroed, then the
 64-row pass-all filter, which fills
 a buffer exactly, then the options and the mode. When the filter and the rest went out as one 536-byte
 transfer, a PCAN-USB Pro FD on macOS was left in reset. It was silent and
@@ -178,9 +179,6 @@ What the bench showed:
   nothing.
 - The adapter destroys its own transmissions too. Each costs it eight on its
   transmit error counter, so a steady diet of them takes it error-passive.
-- **Error counters survive a restart.** Starting a channel does not clear
-  them, so a session can begin error-passive because of the one before; only
-  successful traffic brings them down.
 - **Passing zero destroys every matching frame** until turned off, and the
   sender goes bus-off.
 
@@ -195,10 +193,13 @@ byte is not understood. Both are carried raw in `Record::errorTypeByte` and
 Not yet known: where the bit position counts from, and whether it includes
 stuff bits. Only bit 20 has been tried.
 
-On the Pro FD tested, channel 1 with nothing on its bus reported every ACK
-error with the receive counter at 136 and the transmit counter at 0, unchanging
-from the first record; channel 0 in the same test counted as CAN says. Not
-explained.
+**A start zeroes both error counters** (`0x00a`, both write enables). The
+adapter keeps them across sessions, and nothing else brings a receive counter
+down but receiving. Before this, channel 1 of the Pro FD tested -- not wired
+to anything -- was stuck at REC 136 from some earlier use: error-passive, and
+an error-passive transmitter is not charged for a missing ACK, so every ACK
+error it reported read REC 136, TEC 0, and nothing ever moved. Zeroed, it
+counts exactly as channel 0 does.
 
 ## Tests
 

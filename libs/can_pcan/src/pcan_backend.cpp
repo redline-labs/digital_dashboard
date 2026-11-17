@@ -168,6 +168,8 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             statistics_.state = BusState::ErrorActive;
+            statistics_.txErrorCounter = 0;
+            statistics_.rxErrorCounter = 0;
         }
         running_ = true;
         return {};

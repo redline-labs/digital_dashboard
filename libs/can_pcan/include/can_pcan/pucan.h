@@ -227,6 +227,9 @@ void append_clock(std::vector<uint8_t>& buffer, uint8_t channel, uint8_t clockSe
 void append_options(std::vector<uint8_t>& buffer, uint8_t channel, bool enable, uint16_t ucanMask,
                     uint16_t usbMask);
 void append_std_filter_pass_all(std::vector<uint8_t>& buffer, uint8_t channel);
+// Overwrites both error counters. Only taken in reset mode.
+void append_write_error_counters(std::vector<uint8_t>& buffer, uint8_t channel,
+                                 uint8_t txCounter, uint8_t rxCounter);
 
 // The error generator as command GROUPS, one per transfer, in the order they
 // must be sent. Off and NextFrame are one command; Targeted is two, and part 1
@@ -250,7 +253,9 @@ Result<void> check_command_group(std::span<const uint8_t> group);
 
 // What starting a channel sends, as the groups the reference driver sends it
 // in: the error generator off (a session that died with it on leaves it on,
-// and the adapter keeps destroying frames for nobody), the pass-all filter
+// and the adapter keeps destroying frames for nobody) and both error counters
+// zeroed (they too outlive a session, so an unplugged channel could start
+// error-passive for good: see append_write_error_counters()), the pass-all filter
 // (whose 64 rows fill a buffer exactly), then error reporting on, calibration
 // traffic off, and the mode that leaves reset.
 //
@@ -279,6 +284,17 @@ inline constexpr uint8_t kClock20MHz = 5;
 // one a second -- even while no channel is open, so they pile up in the
 // adapter until the next session drains them.
 inline constexpr uint16_t kOptionCalibrationMessages = 0x8000;
+
+// WriteErrorCounters' enables, in bytes 2..3; the counters follow in bytes 4
+// (transmit) and 5 (receive). A counter whose bit is clear is left alone.
+//
+// Why a start zeroes them: they are kept across sessions, and a receive
+// counter can only come down by receiving. A channel with nothing on its bus
+// was found at REC 136 -- error-passive, where CAN stops counting a missing
+// ACK against the transmitter -- so every session on it began error-passive
+// and its counters never moved. Linux's peak_canfd zeroes them the same way.
+inline constexpr uint16_t kWriteTxErrorCounter = 0x4000;
+inline constexpr uint16_t kWriteRxErrorCounter = 0x8000;
 // An immediate USB transfer per CAN frame rather than waiting to fill one.
 // ControllerOptions::lowLatencyReceive.
 inline constexpr uint16_t kOptionFastForward = 0x2000;

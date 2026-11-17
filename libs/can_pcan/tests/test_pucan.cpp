@@ -251,12 +251,12 @@ void test_command_groups()
             check(check_command_group(group).has_value(),
                   fmt::format("a start group of {} bytes is one valid group", group.size()));
         }
-        // Back to known defaults first and alone, so the two groups behind it
-        // are byte-for-byte what was confirmed on a Pro FD: the generator off,
-        // then every option this backend manages cleared.
-        check(hex(groups[0]) == "0F 10 00 00 00 00 00 00 0C 10 F0 00 00 00 00 20",
+        // Back to known defaults first and alone: the generator off, every
+        // option this backend manages cleared, both error counters zeroed.
+        check(hex(groups[0]) == "0F 10 00 00 00 00 00 00 0C 10 F0 00 00 00 00 20 "
+                                "0A 10 00 C0 00 00 00 00",
               fmt::format("a start turns off the generator and resets the managed options "
-                          "a dead session may have left set: {}",
+                          "and error counters a dead session may have left set: {}",
                           hex(groups[0])));
         check(groups[1].size() == can::pcan::kCommandBufferSize,
               "the pass-all filter fills a command buffer exactly");
@@ -414,6 +414,13 @@ void test_option_and_filter_commands()
     check(buffer[0] == 0x0C && buffer[1] == 0x00, "clearing options uses ClearDisableOption");
     check(buffer[6] == 0x00 && buffer[7] == 0x80,
           fmt::format("with the calibration bit in the USB mask: {}", hex(buffer)));
+
+    // Both enables, then transmit before receive. Distinct values, so a swap
+    // shows: swapped, a start would still zero both and hide it.
+    std::vector<uint8_t> counters;
+    can::pcan::append_write_error_counters(counters, 1, 0x12, 0x34);
+    check(hex(counters) == "0A 10 00 C0 12 34 00 00",
+          fmt::format("writing error counters: {}", hex(counters)));
 
     std::vector<uint8_t> enabling;
     can::pcan::append_options(enabling, 1, true, 0, can::pcan::kOptionCalibrationMessages);
