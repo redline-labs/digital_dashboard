@@ -19,7 +19,7 @@
 #include <memory>
 #include <vector>
 
-#include "hc08/jit/code_memory.h"
+#include "emu/jit/code_memory.h"
 #include "hc08/jit/native_abi.h"
 #include "hc08/jit/translator.h"
 #include "hc08/block_engine.h"

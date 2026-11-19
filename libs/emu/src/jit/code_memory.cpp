@@ -1,4 +1,4 @@
-#include "hc08/jit/code_memory.h"
+#include "emu/jit/code_memory.h"
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -11,7 +11,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "hc08/jit/jit_error.h"
+#include "emu/jit/jit_error.h"
 
 #if defined(__APPLE__)
 #include <libkern/OSCacheControl.h>

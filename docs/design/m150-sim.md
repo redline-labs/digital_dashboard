@@ -57,7 +57,7 @@ another, so an edit that leaves a dangling reference fails the build's tests.
 | Phase | Done when |
 |---|---|
 | 1. Shared infrastructure, the PDM moved onto it | Done: `libs/emu` `Timed`/`Schedule`, `sims/host`, the PDM on them with its tests, serve and the MCP tools unchanged. |
-| 2. `libs/e200` interpreter | Instruction, exception, MMU and SPE tests pass, from programs encoded in the tests themselves. |
+| 2. `libs/e200` interpreter and JIT | Done: the core, MMU, SPE and machine with interpreter, block and AArch64 JIT engines; tests from programs assembled in the tests, and the engines held to the interpreter on random programs. |
 | 3. `libs/mpc55xx` and the M150 board | A bare image echoes CAN frames through FlexCAN and the INTC onto zenoh. |
 | 4. `m150_sim serve` | An outside image (kernel and application) boots and puts its traffic on `vehicle/can0`; tests skip without it. |
-| 5. Engines, I/O | Block engine and JIT; the I/O resources from the topology driven by a plant. |
+| 5. Engine speed, I/O | Block chaining and an x86-64 JIT backend; the I/O resources from the topology driven by a plant. |

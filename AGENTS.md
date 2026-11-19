@@ -130,7 +130,7 @@ discovery seeing only live traffic, and what `accepted: false` and
   each CAN port through can_zenoh's `BridgedChannel`, the same code `can_bridge`
   uses, so nothing downstream can tell. Do not give a simulator a socket or
   topic format of its own. A device plugs into the host as a `ServedDevice`;
-  its CPU (`libs/hc08`, ...) schedules devices through `libs/emu`'s `Timed` and
+  its CPU (`libs/hc08`, `libs/e200`) schedules devices through `libs/emu`'s `Timed` and
   `Schedule`, so the host and the board layers stay CPU-neutral.
 - **No target code in the tree.** The firmware a simulator runs is the
   vendor's, and any image built for an emulated part (a kernel, an M1
@@ -481,8 +481,9 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
                   (CAN channels) -- docs/libs/can_motec.md for the MoTeC one,
                     can_zenoh (a channel onto zenoh topics, and zenoh: back),
-                    emu + hc08 + gz60 (what emulators are built from: wiring,
-                    the CPU08 core and its JIT, the GZ60's modules), mctest,
+                    emu + hc08 + e200 + gz60 (what emulators are built from:
+                    wiring and the JIT's host side, the CPU08 and e200 cores
+                    and their JITs, the GZ60's modules), mctest,
                     byte_stream (the stream, TCP, replay and backoff every
                     device transport shares),
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),

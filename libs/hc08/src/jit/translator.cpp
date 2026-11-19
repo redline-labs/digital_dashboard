@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "hc08/jit/block_assembler.h"
-#include "hc08/jit/jit_error.h"
+#include "emu/jit/jit_error.h"
 
 namespace sim::jit {
 

@@ -1,4 +1,4 @@
-#include "hc08/jit/host_probe.h"
+#include "emu/jit/host_probe.h"
 
 #include <cstring>
 
@@ -9,8 +9,8 @@
 #include <asmjit/x86.h>
 #endif
 
-#include "hc08/jit/code_memory.h"
-#include "hc08/jit/jit_error.h"
+#include "emu/jit/code_memory.h"
+#include "emu/jit/jit_error.h"
 
 namespace sim::jit {
 

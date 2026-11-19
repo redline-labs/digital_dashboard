@@ -11,10 +11,12 @@ What every emulator under [sims](../sims/index.html) is wired from: simulated
 time in ticks, the electrical net between parts, interrupt lines, a CAN bus
 between simulated controllers, snapshot I/O, and the record of where a model is
 known to be incomplete. It has no CPU and no device in particular;
-[hc08](hc08.html) and [gz60](gz60.html) are built on it, and a simulator
-assembles a product from those.
+[hc08](hc08.html), [e200](e200.html) and [gz60](gz60.html) are built on it, and
+a simulator assembles a product from those.
 
-Header-only, CMake target `emu`.
+Header-only, CMake target `emu`. The JIT's host side is the separate target
+`emu_jit` (it links asmjit): the W^X code memory, the error the JIT layer throws,
+and a probe that assembles and runs a tiny host function.
 
 ## Public headers
 
@@ -26,6 +28,8 @@ Header-only, CMake target `emu`.
 | `emu/can_bus.h` | `CanBus`, `CanNode`, the bus `Tap` and `BusFault`. |
 | `emu/snapshot_io.h` | `put_value`/`get_value` for trivially copyable state. |
 | `emu/model_gap.h` | `model_gap::warn`: logged once per site, the first time a run touches something the model does not implement. |
+| `emu/timed.h` | `Timed`, a device with behaviour in time, and the `Schedule` a machine syncs them by. |
+| `emu/jit/code_memory.h`, `emu/jit/host_probe.h`, `emu/jit/jit_error.h` | (`emu_jit`) W^X code memory, the host probe, `JitError`. |
 
 ## Behaviour worth knowing
 
@@ -40,5 +44,7 @@ errors) does so on its own side.
 
 ## Tests
 
-Exercised through [hc08](hc08.html#tests) and [gz60](gz60.html#tests), which use
-every header here.
+`emu_test_timed` checks the schedule's order and its repeated passes;
+`emu_test_jit_probe` runs generated code on the host. The rest is exercised
+through [hc08](hc08.html#tests), [e200](e200.html#tests) and
+[gz60](gz60.html#tests).

@@ -12,8 +12,6 @@ add_library(hc08 STATIC
     src/machine.cpp
     src/jit/assembler_aarch64.cpp
     src/jit/assembler_x86_64.cpp
-    src/jit/code_memory.cpp
-    src/jit/host_probe.cpp
     src/jit/jit_cache.cpp
     src/jit/translator.cpp
 )
@@ -21,6 +19,7 @@ target_include_directories(hc08 PUBLIC include)
 target_link_libraries(hc08
     PUBLIC
         emu
+        emu_jit
         spdlog::spdlog
     PRIVATE
         asmjit::asmjit
@@ -35,7 +34,6 @@ add_executable(hc08_test_core
     tests/test_engines.cpp
     tests/test_machine.cpp
     tests/test_image.cpp
-    tests/test_jit_probe.cpp
     tests/test_jit.cpp
 )
 target_link_libraries(hc08_test_core PRIVATE hc08 mctest)

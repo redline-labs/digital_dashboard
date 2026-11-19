@@ -47,8 +47,9 @@ What the simulators under `sims/` are built from.
 
 | Library | Target | What it is | Page |
 |---|---|---|---|
-| `emu` | `emu` | Simulated time, nets, interrupt lines, a CAN bus between simulated controllers, snapshots, model-gap warnings. Header-only. | [emu](emu.html) |
+| `emu` | `emu`, `emu_jit` | Simulated time, nets, interrupt lines, a CAN bus between simulated controllers, snapshots, model-gap warnings; and the JIT's host side (code memory, probe) every core's JIT shares. | [emu](emu.html) |
 | `hc08` | `hc08` | The CPU08 core: instruction set, machine, S-records, and interpreter, block and JIT engines. | [hc08](hc08.html) |
+| `e200` | `e200` | The e200z6 core (MPC55xx): Book E, the MMU, SPE single precision, a 32-bit machine, an assembler, and interpreter, block and JIT engines. | [e200](e200.html) |
 | `gz60` | `gz60` | The MC68HC908GZ60's modules around the core, MSCAN included. | [gz60](gz60.html) |
 | `mctest` | `mctest` | `TEST()`/`CHECK()` and a runner, for test programs with many small cases. Header-only. | none yet |
 

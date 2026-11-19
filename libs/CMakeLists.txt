@@ -56,6 +56,7 @@ add_subdirectory(can_backends)
 add_subdirectory(mctest)
 add_subdirectory(emu)
 add_subdirectory(hc08)
+add_subdirectory(e200)
 add_subdirectory(gz60)
 # The Trimble GSOF protocol: framing, records, command building. Pure bytes,
 # no I/O -- `bd992` sits above it with the sockets. Independent of everything

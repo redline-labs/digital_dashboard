@@ -1,5 +1,5 @@
 // The JIT toolchain: asmjit assembles a host function into W^X code memory and it runs.
-#include "hc08/jit/host_probe.h"
+#include "emu/jit/host_probe.h"
 #include "mctest/test.h"
 
 TEST(jit_probe_runs_generated_code) {
