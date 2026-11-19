@@ -7,10 +7,11 @@ parent: Design notes
 
 ## Overview
 
-`m150_sim` will stand in for a MoTeC M150 (an M1 "ecu120"): an MPC55xx on an e200 core, the board around it, and its
+`m150_sim` stands in for a MoTeC M150 (an M1 "ecu120"): an MPC55xx on an e200 core, the board around it, and its
 three CAN buses on zenoh as `can_bridge` would put a real unit's. It is the second simulator after
-[pdm32_sim](../sims/pdm32.html), and the first on a different CPU, so it is also what shapes the simulators to take
-more CPUs and board topologies.
+[pdm32_sim](../sims/pdm32.html), and the first on a different CPU, so it is also what shaped the simulators to take
+more CPUs and board topologies. How to run it is on its page, [m150_sim](../sims/m150.html); this note records the
+decisions and the plan.
 
 The simulator is the hardware only. What runs on it -- a kernel and an M1 application -- is an image built and kept
 outside the tree, as the PDM's firmware is; nothing built for the target is in the repository, and neither is a
@@ -21,7 +22,7 @@ toolchain for it.
 | Question | Decision |
 |---|---|
 | Scope | One M150 by itself. Several devices on one bus come later and are assumed to run in real time, each its own process on its own topics. |
-| CPU | Our own e200 core in `libs/e200`, built like `libs/hc08`: interpreter first, block engine and JIT later. |
+| CPU | Our own e200 core in `libs/e200`, built like `libs/hc08`: interpreter, block engine and an AArch64 JIT. |
 | Kernel | Not in the simulator and not in the tree: the image brings its own. |
 | Vendor material | None in the tree. The board's topology is ours: `board/topology/m150.cpp`, first derived from the M1 system's hardware description, now the source of truth and maintained by hand. |
 | Part | The MPC5554 memory map by default, as a variant: which MPC55xx the M150 carries is not confirmed. |
@@ -31,12 +32,12 @@ toolchain for it.
 
 | Where | What |
 |---|---|
-| `libs/emu` | CPU-neutral: `Timed` devices and the `Schedule` that syncs them (Input first, repeated passes), clocks, nets, IRQ lines, the CAN bus. |
+| `libs/emu` | CPU-neutral: `Timed` devices and the `Schedule` that syncs them (Input first, repeated passes), clocks, nets, IRQ lines, the CAN bus; `emu_jit`, the JIT's host side both cores share. |
 | `libs/hc08`, `libs/gz60` | The PDM's CPU08 and its MCU. `hc08::Periph` is a `Timed` with a register window. |
-| `libs/e200` (to come) | The e200: user and supervisor ISA, the SPE's scalar single precision, exceptions (IVPR/IVORn), timebase and decrementer, the MMU (TLB1), a 32-bit physical bus. |
-| `libs/mpc55xx` (to come) | The SoC: memory map, INTC, FlexCAN A-C on `emu::CanBus`, SIU, and register maps that log model gaps for the rest (eQADC, eMIOS, eTPU, DSPI, EBI, FMPLL). |
+| `libs/e200` | The e200: user and supervisor ISA, the SPE's scalar single precision, exceptions (IVPR/IVORn), timebase and decrementer, the MMU (TLB1), a 32-bit physical bus, and the engines. |
+| `libs/mpc55xx` | The SoC: memory map, the boot ROM's reset work, INTC, FlexCAN A-C on `emu::CanBus`, eSCI A as a console, and storage stubs that log model gaps for the rest (SIU, eQADC, eMIOS, eTPU, DSPI, FMPLL, ...). |
 | `sims/host` | Every `serve`: the loop, CAN ports bridged onto zenoh, the serve config, agent-method plumbing. A device plugs in as a `ServedDevice`. |
-| `sims/m150` | `board/` (the board, `board/topology/`), `plant/`, `top/` (instance, session, serve, methods), layered as `sims/pdm32` is. |
+| `sims/m150` | `board/` (the board, `board/topology/`), `top/` (the served device, candump I/O), and the verbs; layered as `sims/pdm32` is, with `plant/` to come. |
 
 ## The board's topology
 
@@ -52,32 +53,6 @@ toolchain for it.
 The tables are maintained by hand; `tests/test_topology.cpp` checks that every name one table uses resolves in
 another, so an edit that leaves a dangling reference fails the build's tests.
 
-## Running an image
-
-```bash
-cmake -S . -B build -DM150_IMAGE=/path/to/m150_mvp.bin   # enables m150_test_boot
-build/sims/m150/m150_sim run /path/to/m150_mvp.bin --seconds 2 [--candump-in in.log] [--engine jit]
-build/sims/m150/m150_sim serve --image /path/to/m150_mvp.bin [-c serve.yaml] [--stepped]
-```
-
-A serve config names the ports to bridge; CAN2 and CAN3 are off unless named:
-
-```yaml
-can:
-  CAN1: {name: can0}
-  CAN2: {name: can1}
-  CAN3: off
-image: /path/to/m150_mvp.bin
-engine: jit
-```
-
-Which FlexCAN drives which connector pair is not known: A, B and C are taken as CAN1, CAN2 and CAN3.
-
-The image is a raw 2 MB image of the internal flash: a kernel whose reset configuration is at 0, and the application
-it loads. MoTeC's kernel is encrypted and is not run; the research tree's MVP kernel stands in for it with the
-system-call ABI the application expects. The console (eSCI A) goes to stderr, every frame on the three buses to stdout
-in candump format.
-
 ## Phases
 
 | Phase | Done when |
@@ -87,4 +62,5 @@ in candump format.
 | 3. `libs/mpc55xx` and the M150 board | Done: the MPC5554 (boot ROM's reset work, INTC, FlexCAN A-C, eSCI A, stubs); a bare image assembled in the test echoes CAN frames by interrupt. |
 | 4a. `m150_sim run` | Done: an outside image (an MVP kernel with an M1 application built by M1 Build) boots, transmits on CAN A and answers what it receives, identically on every engine; `m150_test_boot` skips without `M150_IMAGE`. |
 | 4b. `m150_sim serve` | Done: CAN1-3 (FlexCAN A-C) through `sims/host`, CAN1 on `vehicle/can0` by default and the others off until named; `status`, `console` and stepped `run`; `m150_test_serve` over zenoh. |
-| 5. Engine speed, I/O | Block chaining and an x86-64 JIT backend; the I/O resources from the topology driven by a plant. |
+| 5a. JIT speed | Done: block chaining, register caching, flag-based compares and direct SPE calls (15 to 24 times real time on integer code). |
+| 5b. Next | An x86-64 JIT backend; the I/O resources from the topology driven by a plant; Ethernet (XCP on UDP, mDNS) served by the simulator. |

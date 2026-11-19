@@ -1,6 +1,6 @@
 # The MoTeC M150 (an M1 "ecu120"), emulated: its MPC55xx on an e200 core, the
-# board and what is wired to its connectors. WORK IN PROGRESS: the board (the
-# MPC5554, external RAM, the topology) and `m150_sim run`.
+# board and what is wired to its connectors: the board (the MPC5554, external
+# RAM, the topology), `m150_sim run` and `m150_sim serve` (docs/sims/m150.md).
 #
 # No target code is in the tree: the image it runs -- a kernel and an M1
 # application -- is built and kept outside it, like the PDM's firmware.

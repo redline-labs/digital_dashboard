@@ -509,8 +509,9 @@ sims/               emulators standing in for hardware, WORKSTATION ONLY:
   tools/            check_layers.py (each simulator's include direction)
   pdm32/            a MoTeC PDM32 (its firmware on libs/gz60), pdm32_sim
                     serve|run|images|disasm -- docs/sims/pdm32.md
-  m150/             a MoTeC M150 (MPC55xx, e200) -- in progress: the board's
-                    topology so far -- docs/design/m150-sim.md
+  m150/             a MoTeC M150 (an MPC5554 on libs/e200 and libs/mpc55xx,
+                    an image built outside the tree), m150_sim serve|run --
+                    docs/sims/m150.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus map_server (a file rather than hardware) and the two
                     tools: inspect (look at the bus) and bag (record and replay

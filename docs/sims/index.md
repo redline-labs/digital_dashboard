@@ -19,7 +19,7 @@ says where it looks for it.
 | Simulator | Stands in for | Needs | Page |
 |---|---|---|---|
 | `pdm32_sim` | A MoTeC PDM32 power distribution module on a CAN bus, as `can_bridge` would put a real one on `vehicle/can0`. | the PDM32 application image from PDM Manager | [pdm32_sim](pdm32.html) |
-| `m150_sim` (in progress) | A MoTeC M150 ECU: an MPC5554 on an e200 core, its board and its three CAN buses (`run`, `serve`). | an image built outside the tree (a kernel and an M1 application) | [design](../design/m150-sim.html) |
+| `m150_sim` | A MoTeC M150 ECU running an M1 application, its three CAN buses on zenoh as `can_bridge` would put a real unit's. | a flash image built outside the tree (an MVP kernel and an M1 application) | [m150_sim](m150.html) |
 
 Every simulator's `serve` is the same host (`sims/host`): its config binds each
 of the device's CAN ports to a bus, as `can_bridge` binds an adapter's
