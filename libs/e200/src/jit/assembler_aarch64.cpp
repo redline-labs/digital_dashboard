@@ -1,5 +1,6 @@
 // The e200 BlockAssembler for AArch64 hosts (asmjit a64). Registers:
 //   x19 the Context, x20 the CpuState, x21 the current software-TLB set (callee-saved: they survive helper calls)
+//   w22..w28 the block's cached guest registers (callee-saved too)
 //   w9..w14 the six scratch registers; x15..x17 temporaries; x0..x3 helper arguments
 #if defined(__aarch64__)
 
@@ -24,28 +25,51 @@ constexpr Gp kSoft = x21;
 
 const Gp kScratch[kScratchRegisters] = {w9, w10, w11, w12, w13, w14};
 
-constexpr int32_t kFrameBytes = 48;
+constexpr int32_t kFrameBytes = 96;
+const Gp kCached[kCachedRegisters] = {w22, w23, w24, w25, w26, w27, w28};
 constexpr int32_t kSoftRead = int32_t(offsetof(SoftTlb, read));
 constexpr int32_t kSoftWrite = int32_t(offsetof(SoftTlb, write));
+constexpr int32_t kSoftExec = int32_t(offsetof(SoftTlb, exec));
+constexpr int32_t kEntryPhys = int32_t(offsetof(SoftTlbEntry, phys));
 constexpr int32_t kEntryTag = int32_t(offsetof(SoftTlbEntry, tag));
 constexpr int32_t kEntryHost = int32_t(offsetof(SoftTlbEntry, host));
 
 class Aarch64Assembler final : public BlockAssembler {
    public:
-    explicit Aarch64Assembler(asmjit::CodeHolder* code) : a_(code) {
+    explicit Aarch64Assembler(asmjit::CodeHolder* code) : code_(code), a_(code) {
+    }
+
+    void set_cached(const std::vector<int32_t>& offsets) override {
+        cached_ = offsets;
+        if (cached_.size() > size_t(kCachedRegisters)) {
+            cached_.resize(size_t(kCachedRegisters));
+        }
     }
 
     void prologue() override {
         a_.sub(sp, sp, imm(kFrameBytes));
         a_.stp(x19, x20, ptr(sp, 0));
-        a_.stp(x21, x30, ptr(sp, 16));
+        a_.stp(x21, x22, ptr(sp, 16));
+        a_.stp(x23, x24, ptr(sp, 32));
+        a_.stp(x25, x26, ptr(sp, 48));
+        a_.stp(x27, x28, ptr(sp, 64));
+        a_.str(x30, ptr(sp, 80));
         a_.mov(kContext, x0);
         a_.ldr(kState, ptr(kContext, kCtxState));
         load_soft();
     }
 
     void leave() override {
-        a_.ldp(x21, x30, ptr(sp, 16));
+        flush();
+        leave_raw();
+    }
+
+    void leave_raw() override {
+        a_.ldr(x30, ptr(sp, 80));
+        a_.ldp(x27, x28, ptr(sp, 64));
+        a_.ldp(x25, x26, ptr(sp, 48));
+        a_.ldp(x23, x24, ptr(sp, 32));
+        a_.ldp(x21, x22, ptr(sp, 16));
         a_.ldp(x19, x20, ptr(sp, 0));
         a_.add(sp, sp, imm(kFrameBytes));
         a_.ret(x30);
@@ -63,16 +87,26 @@ class Aarch64Assembler final : public BlockAssembler {
     }
 
     void load_state(int d, int32_t offset, int bytes) override {
-        if (bytes == 1) {
+        if (const Gp* c = cached(offset); c && bytes == 4) {
+            a_.mov(kScratch[d], *c);
+        } else if (bytes == 1) {
             a_.ldrb(kScratch[d], ptr(kState, offset));
         } else {
             a_.ldr(kScratch[d], ptr(kState, offset));
         }
     }
     void store_state(int32_t offset, int s) override {
-        a_.str(kScratch[s], ptr(kState, offset));
+        if (const Gp* c = cached(offset)) {
+            a_.mov(*c, kScratch[s]);
+        } else {
+            a_.str(kScratch[s], ptr(kState, offset));
+        }
     }
     void store_state_imm(int32_t offset, uint32_t value) override {
+        if (const Gp* c = cached(offset)) {
+            load_imm(*c, value);
+            return;
+        }
         load_imm(w15, value);
         a_.str(w15, ptr(kState, offset));
     }
@@ -161,6 +195,30 @@ class Aarch64Assembler final : public BlockAssembler {
         compare(x, value);
         a_.b(cond_of(cond), labels_[label]);
     }
+    void compare_field(unsigned field, int x, int y, uint32_t value, bool is_signed) override {
+        if (y >= 0) {
+            a_.cmp(kScratch[x], kScratch[y]);
+        } else {
+            compare(x, value);
+        }
+        a_.cset(w15, is_signed ? CondCode::kLT : CondCode::kLO);
+        a_.cset(w16, is_signed ? CondCode::kGT : CondCode::kHI);
+        a_.cset(w17, CondCode::kEQ);
+        load_word(w9, kStateXer);
+        a_.lsr(w9, w9, imm(31));
+        a_.orr(w9, w9, w17, lsl(1));
+        a_.orr(w9, w9, w16, lsl(2));
+        a_.orr(w9, w9, w15, lsl(3));
+        const uint32_t shift = 28 - 4 * field;
+        if (const Gp* cr = cached(kStateCr)) {
+            a_.bfi(*cr, w9, imm(shift), imm(4));
+        } else {
+            a_.ldr(w10, ptr(kState, kStateCr));
+            a_.bfi(w10, w9, imm(shift), imm(4));
+            a_.str(w10, ptr(kState, kStateCr));
+        }
+    }
+
     void count_leading_zeros(int d, int s) override {
         a_.clz(kScratch[d], kScratch[s]);
     }
@@ -205,6 +263,7 @@ class Aarch64Assembler final : public BlockAssembler {
     }
 
     void call_step(int d, const Insn* insn, uint32_t pc, uint32_t k) override {
+        flush();
         a_.mov(x0, kContext);
         load_imm64(x1, uint64_t(reinterpret_cast<uintptr_t>(insn)));
         load_imm(w2, pc);
@@ -213,9 +272,141 @@ class Aarch64Assembler final : public BlockAssembler {
         a_.blr(x16);
         a_.mov(kScratch[d], w0);
         load_soft();
+        reload();
+    }
+
+    void call_spe(int d, SpeFunction fn, int x, int y) override {
+        a_.mov(w0, kScratch[x]);
+        a_.mov(w1, kScratch[y]);
+        a_.add(x2, kState, imm(kStateSpefscr));
+        load_imm64(x16, uint64_t(reinterpret_cast<uintptr_t>(fn)));
+        a_.blr(x16);
+        a_.mov(kScratch[d], w0);
+    }
+
+    void bind_body() override {
+        body_ = a_.new_label();
+        loop_ = a_.new_label();
+        a_.align(asmjit::AlignMode::kCode, 64);
+        a_.bind(body_);
+        reload();
+        a_.bind(loop_);
+    }
+    uint64_t body_offset() override {
+        return code_->label_offset_from_base(body_);
+    }
+    void set_block(uint32_t ea, uint32_t pa_page) override {
+        block_ea_ = ea;
+        block_pa_page_ = pa_page;
+    }
+    void chain_imm(uint32_t pc, uint32_t executed) override {
+        load_imm(w15, pc);
+        if (pc == block_ea_) {
+            chain_self(executed);
+        } else {
+            chain(executed, (pc >> 12) == (block_ea_ >> 12));
+        }
+    }
+    void chain_reg(int pc, uint32_t executed) override {
+        a_.mov(w15, kScratch[pc]);
+        chain(executed, false);
     }
 
    private:
+    // The next pc in w15: store it and the cycle count; enter the next block's body when the table has it for this pc
+    // and this physical page and it fits the budget, else leave. Uses x9..x17 (the block is over).
+    // a jump to this block's own start (a loop): only the budget to check
+    void chain_self(uint32_t executed) {
+        const asmjit::Label out = a_.new_label();
+        a_.str(w15, ptr(kState, kStatePc));
+        a_.ldr(x16, ptr(kContext, kCtxStartCycles));
+        add_imm64(x16, executed);
+        a_.str(x16, ptr(kContext, kCtxStartCycles));
+        a_.str(x16, ptr(kState, kStateCycles));
+        add_imm64_to(x12, x16, executed);  // this block's length is `executed`: it ends at its jump back
+        a_.ldr(x13, ptr(kContext, kCtxBudget));
+        a_.cmp(x12, x13);
+        a_.b_hi(out);
+        a_.str(x12, ptr(kContext, kCtxBlockEnd));
+        a_.b(loop_);  // the cached registers stay where they are
+        a_.bind(out);
+        leave();
+    }
+
+    void add_imm64_to(const Gp& d, const Gp& s, uint32_t n) {
+        if (n < 4096) {
+            a_.add(d, s, imm(n));
+        } else {
+            load_imm(w9, n);
+            a_.add(d, s, x9);
+        }
+    }
+
+    void chain(uint32_t executed, bool same_page) {
+        const asmjit::Label out = a_.new_label();
+        flush();
+        a_.str(w15, ptr(kState, kStatePc));
+        a_.ldr(x16, ptr(kContext, kCtxStartCycles));
+        add_imm64(x16, executed);
+        a_.str(x16, ptr(kContext, kCtxStartCycles));
+        a_.str(x16, ptr(kState, kStateCycles));
+        // the table's entry for pc
+        a_.ubfx(w17, w15, imm(2), imm(kChainTableBits));
+        a_.ldr(x9, ptr(kContext, kCtxTable));
+        a_.ldr(x17, ptr(x9, x17, lsl(3)));
+        a_.cbz(x17, out);
+        a_.ldr(w9, ptr(x17, kChainEa));
+        a_.cmp(w9, w15);
+        a_.b_ne(out);
+        if (same_page) {
+            // this block's page, checked when it was entered: the next block must come from the same physical page
+            a_.ldr(w12, ptr(x17, kChainPaPage));
+            compare_w(w12, block_pa_page_);
+            a_.b_ne(out);
+        } else {
+            // the pc's page translates, now, to the page the block was translated from
+            a_.ubfx(w10, w15, imm(12), imm(8));
+            a_.add(x10, kSoft, x10, lsl(4));
+            a_.ldr(w11, ptr(x10, kSoftExec + kEntryTag));
+            a_.and_(w12, w15, imm(0xFFFFF000u));
+            a_.cmp(w11, w12);
+            a_.b_ne(out);
+            a_.ldr(w11, ptr(x10, kSoftExec + kEntryPhys));
+            a_.ldr(w12, ptr(x17, kChainPaPage));
+            a_.cmp(w12, w11, lsr(12));
+            a_.b_ne(out);
+        }
+        // it ends within the budget
+        a_.ldr(w11, ptr(x17, kChainCount));
+        a_.add(x12, x16, x11);
+        a_.ldr(x13, ptr(kContext, kCtxBudget));
+        a_.cmp(x12, x13);
+        a_.b_hi(out);
+        a_.str(x12, ptr(kContext, kCtxBlockEnd));
+        a_.ldr(x9, ptr(x17, kChainBody));
+        a_.br(x9);
+        a_.bind(out);
+        leave_raw();
+    }
+
+    void compare_w(const Gp& r, uint32_t value) {
+        if (value < 4096) {
+            a_.cmp(r, imm(value));
+        } else {
+            load_imm(w13, value);
+            a_.cmp(r, w13);
+        }
+    }
+
+    void add_imm64(const Gp& d, uint32_t n) {
+        if (n < 4096) {
+            a_.add(d, d, imm(n));
+        } else {
+            load_imm(w9, n);
+            a_.add(d, d, x9);
+        }
+    }
+
     // x15 = the software-TLB entry for `ea` (of the set at `kind`); to `slow` unless its tag is ea's page and the
     // access stays in the page. Leaves x16 = the page's host address, x17 = ea's offset in the page.
     void lookup(int ea, int size, int32_t kind, const asmjit::Label& slow) {
@@ -230,6 +421,33 @@ class Aarch64Assembler final : public BlockAssembler {
         a_.cmp(w17, imm(uint32_t(0x1000 - size)));
         a_.b_hi(slow);
         a_.ldr(x16, ptr(x15, kind + kEntryHost));
+    }
+
+    void load_word(const Gp& d, int32_t offset) {
+        if (const Gp* c = cached(offset)) {
+            a_.mov(d, *c);
+        } else {
+            a_.ldr(d, ptr(kState, offset));
+        }
+    }
+
+    const Gp* cached(int32_t offset) const {
+        for (size_t k = 0; k < cached_.size(); ++k) {
+            if (cached_[k] == offset) {
+                return &kCached[k];
+            }
+        }
+        return nullptr;
+    }
+    void flush() {
+        for (size_t k = 0; k < cached_.size(); ++k) {
+            a_.str(kCached[k], ptr(kState, cached_[k]));
+        }
+    }
+    void reload() {
+        for (size_t k = 0; k < cached_.size(); ++k) {
+            a_.ldr(kCached[k], ptr(kState, cached_[k]));
+        }
     }
 
     void load_soft() {
@@ -293,8 +511,14 @@ class Aarch64Assembler final : public BlockAssembler {
         }
     }
 
+    asmjit::CodeHolder* code_;
     Assembler a_;
+    asmjit::Label body_;
+    asmjit::Label loop_;
     std::vector<asmjit::Label> labels_;
+    std::vector<int32_t> cached_;
+    uint32_t block_ea_ = 0;
+    uint32_t block_pa_page_ = 0;
 };
 
 }  // namespace

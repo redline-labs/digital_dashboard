@@ -2,6 +2,10 @@
 // stores, the reservation, interrupts and their save/restore registers, privilege, the decrementer, the MMU, and the
 // SPE's single-precision arithmetic. Programs are assembled here (e200/assembler.h); no target toolchain.
 #include <bit>
+#include <cfenv>
+#include <cmath>
+#include <cstdio>
+#include <random>
 
 #include "flat_env.h"
 #include "mctest/test.h"
@@ -583,4 +587,46 @@ TEST(e200_decode_and_disassemble) {
     CHECK(decode(0x7C64291E).op == Op::Isel);
     CHECK(ends_block(decode(0x44000002)));
     CHECK(!ends_block(decode(0x38610008)));
+}
+
+TEST(e200_spe_round_to_nearest_matches_ieee_and_its_flags) {
+    // The round-to-nearest path computes without the host's floating-point state; it must give IEEE's result and
+    // inexact flag wherever the SPE agrees with IEEE (finite normal operands and results).
+    std::mt19937 rng(7);
+    auto random_float = [&rng]() {
+        // spread over the exponent range, both signs, some exact small integers
+        if (rng() % 8 == 0) {
+            return float(int(rng() % 2001) - 1000);
+        }
+        const uint32_t exp = 1 + rng() % 253;
+        return std::bit_cast<float>((rng() & 0x807FFFFFu) | (exp << 23));
+    };
+    int mismatches = 0;
+    for (int i = 0; i < 200000; ++i) {
+        const float x = random_float();
+        const float y = random_float();
+        for (int op = 0; op < 4; ++op) {
+            std::feclearexcept(FE_ALL_EXCEPT);
+            volatile float vx = x, vy = y;
+            volatile float want = op == 0 ? vx + vy : op == 1 ? vx - vy : op == 2 ? vx * vy : vx / vy;
+            const bool want_inexact = std::fetestexcept(FE_INEXACT) != 0;
+            const float w = want;
+            if (!std::isfinite(w) || (w != 0 && std::fabs(w) < 0x1p-126f) || (op == 3 && y == 0)) {
+                continue;  // where the SPE differs from IEEE on purpose
+            }
+            uint32_t fscr = 0;
+            const uint32_t got = op == 0 ? spe::add(f32(x), f32(y), &fscr)
+                                 : op == 1 ? spe::sub(f32(x), f32(y), &fscr)
+                                 : op == 2 ? spe::mul(f32(x), f32(y), &fscr)
+                                           : spe::div(f32(x), f32(y), &fscr);
+            const bool got_inexact = (fscr & kSpefscrFx) != 0;
+            if ((got != f32(w) && !(w == 0 && (got & 0x7FFFFFFF) == 0)) || got_inexact != want_inexact) {
+                if (mismatches++ < 5) {
+                    std::fprintf(stderr, "op %d: %a %a -> %08x (inexact %d), IEEE %08x (inexact %d)\n", op, double(x),
+                                 double(y), got, got_inexact, f32(w), want_inexact);
+                }
+            }
+        }
+    }
+    CHECK_EQ(mismatches, 0);
 }

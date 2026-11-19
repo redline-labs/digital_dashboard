@@ -67,11 +67,13 @@ class Asm {
     void lwz(int d, int16_t off, int a) { d_form(32, d, a, uint16_t(off)); }
     void lwzu(int d, int16_t off, int a) { d_form(33, d, a, uint16_t(off)); }
     void lbz(int d, int16_t off, int a) { d_form(34, d, a, uint16_t(off)); }
+    void lbzu(int d, int16_t off, int a) { d_form(35, d, a, uint16_t(off)); }
     void lhz(int d, int16_t off, int a) { d_form(40, d, a, uint16_t(off)); }
     void lha(int d, int16_t off, int a) { d_form(42, d, a, uint16_t(off)); }
     void stw(int s, int16_t off, int a) { d_form(36, s, a, uint16_t(off)); }
     void stwu(int s, int16_t off, int a) { d_form(37, s, a, uint16_t(off)); }
     void stb(int s, int16_t off, int a) { d_form(38, s, a, uint16_t(off)); }
+    void stbu(int s, int16_t off, int a) { d_form(39, s, a, uint16_t(off)); }
     void sth(int s, int16_t off, int a) { d_form(44, s, a, uint16_t(off)); }
     void lmw(int d, int16_t off, int a) { d_form(46, d, a, uint16_t(off)); }
     void stmw(int s, int16_t off, int a) { d_form(47, s, a, uint16_t(off)); }

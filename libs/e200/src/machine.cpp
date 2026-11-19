@@ -485,10 +485,11 @@ uint32_t Machine::jit_step(jit::Context* c, const Insn* insn, uint32_t pc, uint3
         m.jit_stop_ = stop;
         return 1;
     }
+    // what a chained exit may run up to, as the instruction left it
+    c->budget = std::min(m.limit_cycles_, s.timer_event);
     // leave when the instruction went elsewhere (a branch, an interrupt), took extra cycles (lmw/stmw), dropped
     // code, or moved the limit or the decrementer's event inside what is left of the block
-    if (s.pc != pc + 4 || s.cycles != c->start_cycles + k + 1 || m.jit_dropped_ ||
-        m.limit_cycles_ < m.jit_block_end_ || s.timer_event < m.jit_block_end_) {
+    if (s.pc != pc + 4 || s.cycles != c->start_cycles + k + 1 || m.jit_dropped_ || c->budget < c->block_end) {
         return 1;
     }
     return 0;
@@ -529,6 +530,7 @@ Stop Machine::run_jit() {
         jit_ctx_.soft = &soft_;
         jit_ctx_.step = &Machine::jit_step;
         jit_ctx_.env = this;
+        jit_ctx_.table = jit_->table();
     }
     jit::JitStatistics& js = jit_->stats;
     for (;;) {
@@ -555,7 +557,8 @@ Stop Machine::run_jit() {
         jit::Block* b = watch ? nullptr : jit_block(s.pc);
         if (b && s.cycles + b->count() <= limit_cycles_ && s.cycles + b->count() <= s.timer_event) {
             jit_ctx_.start_cycles = s.cycles;
-            jit_block_end_ = s.cycles + b->count();
+            jit_ctx_.block_end = s.cycles + b->count();
+            jit_ctx_.budget = std::min(limit_cycles_, s.timer_event);
             jit_dropped_ = false;
             jit_stop_ = Stop{};
             b->entry(&jit_ctx_);

@@ -308,7 +308,6 @@ class Machine {
 
     std::unique_ptr<jit::JitCache> jit_;
     jit::Context jit_ctx_;
-    uint64_t jit_block_end_ = 0;  // where the running block would end: a helper leaves if the limit moved before it
     bool jit_dropped_ = false;    // code was dropped while a block ran
     Stop jit_stop_;
     bool jit_fallback_warned_ = false;

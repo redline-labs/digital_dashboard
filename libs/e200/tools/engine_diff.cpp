@@ -9,6 +9,10 @@
 // after each. `broken` is the JIT with one register bit flipped part-way: the checker must catch it (the test expects
 // a failure), or a checker that cannot fail would prove nothing.
 #include <chrono>
+#include <ctime>
+#if defined(__APPLE__)
+#include <pthread/qos.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -270,8 +274,12 @@ bool compare(const Machine& a, const Machine& b, std::string* why) {
 
 namespace {
 
-// --bench: a checksum loop (loads, ALU, stores, a compare and branch) on each engine, in 100 us quanta.
-int bench() {
+// --bench [ENGINE [WORKLOAD [SCALE]]]: workloads like compiled firmware, on each engine (or one), in 100 us quanta:
+//   checksum  a load/ALU/store loop with a compare and a counted branch
+//   calls     a function call per iteration: stack frame, LR save and restore, a leaf call, return
+//   float     SPE single-precision multiply-add and compare
+//   copy      a byte copy (lbzu/stbu) and a word clear
+Asm bench_checksum() {
     Asm a(kCode);
     auto outer = a.label();
     auto inner = a.label();
@@ -289,17 +297,132 @@ int bench() {
     a.cmplw(0, 3, 4);
     a.bdnz(inner);
     a.b(outer);
-    for (Engine e : {Engine::Interpreter, Engine::Block, Engine::Jit}) {
-        auto m = make_machine(e);
-        load(*m, a);
-        m->state.pc = kCode;
-        const uint64_t cycles = e == Engine::Interpreter ? 20'000'000 : 100'000'000;
-        const auto t0 = std::chrono::steady_clock::now();
-        m->run_until(cycles);
-        const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-        std::printf("%-12s %7.1f M instructions/s (%.0fx real time at 125 MHz)\n",
-                    e == Engine::Interpreter ? "interpreter" : e == Engine::Block ? "block" : "jit",
-                    double(cycles) / s / 1e6, double(cycles) / s / 125e6);
+    return a;
+}
+
+Asm bench_calls() {
+    Asm a(kCode);
+    auto loop = a.label();
+    auto fn = a.label();
+    auto leaf = a.label();
+    a.li32(1, kData + 0x1F00);  // the stack
+    a.li(20, 0);
+    a.bind(loop);
+    a.mr(3, 20);
+    a.bl(fn);
+    a.add(21, 21, 3);
+    a.addi(20, 20, 1);
+    a.cmpwi(0, 20, 1000);
+    a.blt(loop);
+    a.li(20, 0);
+    a.b(loop);
+    // fn(x): a frame, LR saved, two callee-saved registers, a leaf call
+    a.bind(fn);
+    a.stwu(1, -32, 1);
+    a.mflr(0);
+    a.stw(0, 36, 1);
+    a.stw(30, 24, 1);
+    a.stw(31, 28, 1);
+    a.mr(31, 3);
+    a.addi(3, 3, 7);
+    a.bl(leaf);
+    a.add(3, 3, 31);
+    a.lwz(0, 36, 1);
+    a.lwz(30, 24, 1);
+    a.lwz(31, 28, 1);
+    a.mtlr(0);
+    a.addi(1, 1, 32);
+    a.blr();
+    a.bind(leaf);
+    a.slwi(4, 3, 2);
+    a.cmpwi(0, 4, 100);
+    a.isel(3, 4, 3, 1);
+    a.blr();
+    return a;
+}
+
+Asm bench_float() {
+    Asm a(kCode);
+    auto loop = a.label();
+    auto skip = a.label();
+    a.li32(3, 0x3F800000);   // 1.0
+    a.li32(4, 0x3F7FBE77);   // 0.999
+    a.li32(5, 0);
+    a.li32(9, kData);
+    a.bind(loop);
+    a.lwz(6, 0, 9);
+    a.efsmul(3, 3, 4);
+    a.efsadd(5, 5, 3);
+    a.efscmpgt(1, 5, 4);
+    a.ble(skip, 1);
+    a.efsmul(5, 5, 4);
+    a.bind(skip);
+    a.stw(5, 4, 9);
+    a.b(loop);
+    return a;
+}
+
+Asm bench_copy() {
+    Asm a(kCode);
+    auto outer = a.label();
+    auto copy = a.label();
+    auto clear = a.label();
+    a.bind(outer);
+    a.li32(3, kData - 1);
+    a.li32(4, kData + 0x800 - 1);
+    a.li(5, 1024);
+    a.mtctr(5);
+    a.bind(copy);
+    a.lbzu(6, 1, 3);
+    a.stbu(6, 1, 4);
+    a.bdnz(copy);
+    a.li32(3, kData + 0x1000);
+    a.li(5, 256);
+    a.mtctr(5);
+    a.li(6, 0);
+    a.bind(clear);
+    a.stw(6, 0, 3);
+    a.addi(3, 3, 4);
+    a.bdnz(clear);
+    a.b(outer);
+    return a;
+}
+
+int bench(const std::string& only, const std::string& workload, uint64_t scale) {
+#if defined(__APPLE__)
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);  // a performance core where there is one
+#endif
+    const struct {
+        const char* name;
+        Asm (*program)();
+    } workloads[] = {{"checksum", bench_checksum}, {"calls", bench_calls}, {"float", bench_float}, {"copy", bench_copy}};
+    for (const auto& w : workloads) {
+        if (!workload.empty() && workload != w.name) {
+            continue;
+        }
+        for (Engine e : {Engine::Interpreter, Engine::Block, Engine::Jit}) {
+            const char* name = e == Engine::Interpreter ? "interpreter" : e == Engine::Block ? "block" : "jit";
+            if (!only.empty() && only != name) {
+                continue;
+            }
+            const uint64_t cycles = e == Engine::Interpreter ? 20'000'000 : e == Engine::Block ? 30'000'000
+                                                                                                : 100'000'000 * scale;
+            // the best of five runs of thread CPU time: other work on the machine only ever slows a run down
+            double best = 1e30;
+            for (int rep = 0; rep < 5; ++rep) {
+                auto m = make_machine(e);
+                load(*m, w.program());
+                m->state.pc = kCode;
+                timespec t0{}, t1{};
+                clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
+                m->run_until(cycles);
+                clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t1);
+                best = std::min(best, double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9);
+            }
+            const double s = best;
+            std::printf("%-9s %-12s %7.1f M instructions/s (%4.1fx real time at 125 MHz)\n", w.name, name,
+                        double(cycles) / s / 1e6, double(cycles) / s / 125e6);
+        }
     }
     return 0;
 }
@@ -307,8 +430,8 @@ int bench() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc == 2 && std::string(argv[1]) == "--bench") {
-        return bench();
+    if (argc >= 2 && std::string(argv[1]) == "--bench") {
+        return bench(argc >= 3 ? argv[2] : "", argc >= 4 ? argv[3] : "", argc >= 5 ? std::strtoull(argv[4], nullptr, 0) : 1);
     }
     std::string engine_name = "jit";
     int cases = 2000;
