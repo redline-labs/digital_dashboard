@@ -13,14 +13,15 @@
 #include <vector>
 
 #include "pdm32/board/pdm32.h"
-#include "hc08/periph.h"
+#include "emu/clock.h"
+#include "emu/timed.h"
 #include "pdm32/plant/loads.h"
 
 namespace sim::sys {
 
-class Stimulus final : public Periph {
+class Stimulus final : public Timed {
    public:
-    Stimulus(Pdm32Board& board, plant::Harness& harness);
+    Stimulus(Pdm32Board& board, plant::Harness& harness, Clock clock);
 
     static constexpr uint64_t kStepUs = 1000;
 
@@ -61,15 +62,10 @@ class Stimulus final : public Periph {
         events_ = s.events;
     }
 
-   protected:
-    uint8_t rd(uint16_t) override {
-        return 0;
-    }
-    void wr(uint16_t, uint8_t) override {
-    }
 
    private:
     Pdm32Board& board_;
+    Clock clock_;
     plant::Harness& harness_;
     uint64_t next_step_ = 0;
     uint64_t last_plant_ = 0;

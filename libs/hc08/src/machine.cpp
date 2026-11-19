@@ -17,29 +17,21 @@ Machine::Machine(MachineConfig config) : cfg(config) {
     };
 }
 
-void Machine::add(std::shared_ptr<Periph> device) {
-    device->m = this;
-    devices_.push_back(device);
-
-    timed_.clear();
-    for (const std::shared_ptr<Periph>& p : devices_) {
-        if (p->timing() == Timing::Input) {
-            timed_.push_back(p.get());
-        }
+void Machine::add(std::shared_ptr<Timed> device) {
+    if (auto* periph = dynamic_cast<Periph*>(device.get())) {
+        periph->m = this;
+        periphs_.push_back(periph);
     }
-    for (const std::shared_ptr<Periph>& p : devices_) {
-        if (p->timing() == Timing::Timed) {
-            timed_.push_back(p.get());
-        }
-    }
+    schedule_.add(*device);
+    devices_.push_back(std::move(device));
 }
 
 void Machine::map(uint16_t base, uint32_t size, Periph& device, uint16_t offset) {
     mem.add_device(base, size, &device, offset);
 }
 
-Periph* Machine::find(std::string_view name) const {
-    for (const std::shared_ptr<Periph>& p : devices_) {
+Timed* Machine::find(std::string_view name) const {
+    for (const std::shared_ptr<Timed>& p : devices_) {
         if (p->name() == name) {
             return p.get();
         }
@@ -54,7 +46,7 @@ void Machine::set_bus_hz(uint64_t hz) {
     }
 
     const uint64_t t = now();
-    for (const std::shared_ptr<Periph>& p : devices_) {
+    for (const std::shared_ptr<Timed>& p : devices_) {
         p->sync(t);
     }
 
@@ -63,7 +55,7 @@ void Machine::set_bus_hz(uint64_t hz) {
     ticks_per_cycle_ = tpc;
     limit_cycles_ = std::min(limit_cycles_, cpu.cycles);  // end the quantum: its cycle budget was at the old rate
 
-    for (const std::shared_ptr<Periph>& p : devices_) {
+    for (Periph* p : periphs_) {
         p->bus_clock_changed(t);
     }
 
@@ -84,7 +76,7 @@ void Machine::request_reset(ResetCause cause) {
 void Machine::reset(ResetCause cause) {
     reset_count_++;
     const uint64_t t = now();
-    for (const std::shared_ptr<Periph>& p : devices_) {
+    for (const std::shared_ptr<Timed>& p : devices_) {
         p->sync(t);
         p->reset();
     }
@@ -207,31 +199,6 @@ void Machine::check_data_watch(uint16_t addr, uint8_t value, bool write) {
 
 // ---------------------------------------------------------------------------------------------- the run loop
 
-void Machine::sync_due(uint64_t t) {
-    // repeated passes: a device synced may make another due (the stimulus sets an input the ADC samples)
-    for (int pass = 0; pass < 64; pass++) {
-        bool any = false;
-        for (Periph* p : timed_) {
-            if (p->next_event() <= t) {
-                p->sync(t);
-                any = true;
-            }
-        }
-        if (!any) {
-            return;
-        }
-    }
-    SPDLOG_WARN("devices still due after 64 passes at t={}", t);
-}
-
-uint64_t Machine::earliest_event() const {
-    uint64_t earliest = kNever;
-    for (const Periph* p : timed_) {
-        earliest = std::min(earliest, p->next_event());
-    }
-    return earliest;
-}
-
 Stop Machine::run_engine() {
     switch (cfg.engine) {
         case CpuEngine::Interpreter:
@@ -262,9 +229,12 @@ void Machine::enter_mode(CpuMode mode) {
     mode_ = mode;
 
     if (was_stop != is_stop) {
-        for (const std::shared_ptr<Periph>& p : devices_) {
-            p->sync(t);
-            p->stop_mode(is_stop, t);
+        // every device catches up (the board, the stimulus too); those with a register window are told
+        for (const std::shared_ptr<Timed>& device : devices_) {
+            device->sync(t);
+            if (auto* p = dynamic_cast<Periph*>(device.get())) {
+                p->stop_mode(is_stop, t);
+            }
         }
     }
 }
@@ -283,7 +253,7 @@ Stop Machine::run_until(uint64_t until) {
         }
 
         const uint64_t t = now();
-        sync_due(t);
+        schedule_.sync_due(t);
 
         // a sleeping CPU wakes on an interrupt it can see
         if (mode_ != CpuMode::Run) {
@@ -293,7 +263,7 @@ Stop Machine::run_until(uint64_t until) {
             }
         }
 
-        const uint64_t end = std::min({until, earliest_event(), t + cfg.max_quantum_ticks});
+        const uint64_t end = std::min({until, schedule_.earliest(), t + cfg.max_quantum_ticks});
 
         if (mode_ != CpuMode::Run) {
             // nothing runs: time jumps to the next event
@@ -340,7 +310,7 @@ Stop Machine::run_until(uint64_t until) {
         reset_pending_ = false;
         reset(reset_cause_);
     }
-    sync_due(now());
+    schedule_.sync_due(now());
     return Stop{StopKind::Limit, cpu.pc, 0};
 }
 
@@ -350,7 +320,7 @@ Machine::Snapshot Machine::snapshot() const {
     Snapshot s;
     s.cpu = cpu;
     s.memory.assign(mem.bytes.begin(), mem.bytes.end());
-    for (const std::shared_ptr<Periph>& p : devices_) {
+    for (const std::shared_ptr<Timed>& p : devices_) {
         p->save(s.devices);
     }
     s.base_tick = base_tick_;
@@ -365,7 +335,7 @@ void Machine::restore(const Snapshot& s) {
     cpu = s.cpu;
     std::memcpy(mem.bytes.data(), s.memory.data(), mem.bytes.size());
     const uint8_t* in = s.devices.data();
-    for (const std::shared_ptr<Periph>& p : devices_) {
+    for (const std::shared_ptr<Timed>& p : devices_) {
         p->load(in);
     }
     base_tick_ = s.base_tick;

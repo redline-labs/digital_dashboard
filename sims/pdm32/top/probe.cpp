@@ -38,30 +38,6 @@ std::optional<uint16_t> parse_address(const std::string& text) {
 
 }  // namespace
 
-std::optional<double> parse_number(const nlohmann::json& value) {
-    if (value.is_number()) {
-        return value.get<double>();
-    }
-    if (value.is_boolean()) {
-        return value.get<bool>() ? 1.0 : 0.0;
-    }
-    if (value.is_string()) {
-        const std::string s = value.get<std::string>();
-        if (auto a = parse_address(s)) {
-            return double(*a);
-        }
-        try {
-            size_t used = 0;
-            const double d = std::stod(s, &used);
-            if (used == s.size()) {
-                return d;
-            }
-        } catch (const std::exception&) {
-        }
-    }
-    return std::nullopt;
-}
-
 std::optional<uint16_t> address_of(const Instance& instance, const std::string& name) {
     if (auto a = parse_address(name)) {
         return a;
@@ -182,7 +158,7 @@ std::optional<double> read_name(Instance& in, const std::string& name, std::stri
     }
 
     if (std::regex_match(name, mt, kDeviceRegister)) {
-        if (Periph* dev = m.find(mt[1].str())) {
+        if (auto* dev = dynamic_cast<Periph*>(m.find(mt[1].str()))) {
             for (const DeviceRegister& r : dev->registers()) {
                 if (r.name == mt[2].str()) {
                     dev->sync(m.now());

@@ -1,6 +1,6 @@
-#include "pdm32/top/control.h"
+#include "host/control.h"
 
-#include "pdm32/top/probe.h"
+#include <exception>
 
 namespace sim::sys {
 
@@ -37,6 +37,36 @@ void ControlMethods::add(const std::string& method, std::string summary, Handler
             }
         },
         kind, std::move(summary));
+}
+
+std::optional<double> parse_number(const nlohmann::json& value) {
+    if (value.is_number()) {
+        return value.get<double>();
+    }
+    if (value.is_boolean()) {
+        return value.get<bool>() ? 1.0 : 0.0;
+    }
+    if (!value.is_string()) {
+        return std::nullopt;
+    }
+    const std::string s = value.get<std::string>();
+    try {
+        size_t used = 0;
+        if (s.size() > 1 && s[0] == '$') {
+            const unsigned long long v = std::stoull(s.substr(1), &used, 16);
+            return used == s.size() - 1 ? std::optional<double>(double(v)) : std::nullopt;
+        }
+        if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+            const unsigned long long v = std::stoull(s.substr(2), &used, 16);
+            return used == s.size() - 2 ? std::optional<double>(double(v)) : std::nullopt;
+        }
+        const double d = std::stod(s, &used);
+        if (used == s.size()) {
+            return d;
+        }
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
 }
 
 namespace {

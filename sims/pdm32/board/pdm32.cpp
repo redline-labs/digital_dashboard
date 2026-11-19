@@ -46,7 +46,7 @@ double sensed_count(const std::array<uint8_t, 256>& raw_for_count, double count)
 
 }  // namespace
 
-Pdm32Board::Pdm32Board(MachineConfig config) : Periph("board", Timing::Timed), soc(config), switches_(make_switches()) {
+Pdm32Board::Pdm32Board(MachineConfig config) : Timed("board", Timing::Timed), soc(config), switches_(make_switches()) {
     input_v_.fill(std::numeric_limits<double>::quiet_NaN());  // open
     for (std::array<uint8_t, 256>& table : raw_for_count_) {
         for (size_t c = 0; c < 256; c++) {
@@ -55,7 +55,7 @@ Pdm32Board::Pdm32Board(MachineConfig config) : Periph("board", Timing::Timed), s
     }
     load_ohms_.fill(kOpen);
 
-    soc.m.add(std::shared_ptr<Periph>(std::shared_ptr<Periph>{}, this));
+    soc.m.add(std::shared_ptr<Timed>(std::shared_ptr<Timed>{}, this));  // owned by its holder, not the machine
     soc.mscan->attach(can);
     soc.ports->on_drive = [this](Port port, uint8_t level, uint8_t ddr, uint64_t now) {
         // only the ports with gates, and only when what they drive changed (PTB carries the mux address and changes

@@ -46,6 +46,10 @@ class ControlMethods {
     agent_control::Dispatcher& dispatcher_;
 };
 
+// "0x1A", "$1A", "26", or a JSON number (a boolean counts as 0 or 1). Hex is read at full width: addresses are 16 bits
+// on one device and 32 on another.
+std::optional<double> parse_number(const nlohmann::json& value);
+
 // Parameter readers: a missing or malformed parameter throws ControlError(BadParams) naming it.
 uint64_t param_unsigned(const json& params, const std::string& name);
 std::optional<uint64_t> optional_unsigned(const json& params, const std::string& name);

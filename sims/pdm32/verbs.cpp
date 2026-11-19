@@ -22,8 +22,8 @@
 #include "hc08/disasm.h"
 #include "node_health/reporter.h"
 #include "pub_sub/node_identity.h"
-#include "server.h"
-#include "serve_config.h"
+#include "host/server.h"
+#include "pdm32/top/served.h"
 #include "hc08/image.h"
 #include "pdm32/top/scenario.h"
 
@@ -46,7 +46,8 @@ void addEngineOption(cxxopts::Options& options) {
 }  // namespace
 
 void addServeOptions(cxxopts::Options& options) {
-    options.add_options()("c,config", "The serve config (YAML); see serve_config.h", cxxopts::value<std::string>())(
+    options.add_options()("c,config", "The serve config (YAML); see sims/host/serve_config.h",
+                          cxxopts::value<std::string>())(
         "scenario", "A scenario to set up the PDM's loads, inputs and configuration", cxxopts::value<std::string>())(
         "stepped", "Time moves only when an agent says (run, step), not with the wall clock")(
         "allow-write", "Let agents write firmware memory");
@@ -56,42 +57,46 @@ void addServeOptions(cxxopts::Options& options) {
 }
 
 int runServe(::cli::Context& context) {
+    const ServeSchema& schema = pdm32_serve_schema();
     ServeOptions options;
+    options.schema = schema;
+    options.config = default_serve_config(schema);
     if (context.has("config")) {
-        auto config = load_serve_config(context.stringOr("config", ""));
+        auto config = load_serve_config(schema, context.stringOr("config", ""));
         if (!config) {
             return ::cli::kFailure;
         }
         options.config = std::move(*config);
     }
     // The command line wins over the file.
-    options.config.scenario = context.stringOr("scenario", options.config.scenario);
-    options.config.firmware = context.stringOr("firmware", options.config.firmware);
-    options.config.engine = context.stringOr("engine", options.config.engine);
+    for (const char* key : {"scenario", "firmware", "engine"}) {
+        if (context.has(key)) {
+            options.config.device[key] = context.stringOr(key, "");
+        }
+    }
     options.config.stepped = options.config.stepped || context.flag("stepped");
-    options.allow_write = context.flag("allow-write");
-    if (const auto socket = agent_control::mcpSocketPath(context.args(), "pdm32_sim")) {
+    const bool allow_write = context.flag("allow-write");
+    if (const auto socket = agent_control::mcpSocketPath(context.args(), schema.app)) {
         options.control_socket = *socket;
         agent_control::installLogRing();
     }
 
-    pub_sub::NodeIdentity identity("pdm32_sim");
-    node_health::HealthReporter health("pdm32_sim");
+    pub_sub::NodeIdentity identity(schema.app);
+    node_health::HealthReporter health(schema.app);
     ::cli::installInterruptHandler();
 
-    std::unique_ptr<Server> server;
+    std::unique_ptr<DeviceServer> server;
     try {
-        server = std::make_unique<Server>(options);
+        auto device = std::make_unique<Pdm32Served>(pdm32_session_options(options.config, allow_write));
+        server = std::make_unique<DeviceServer>(options, std::move(device));
     } catch (const std::exception& e) {
         SPDLOG_ERROR("{}", e.what());
         return ::cli::kFailure;
     }
-
     server->run(
         [&]() {
-            const ServeConfig& config = server->options().config;
-            SPDLOG_INFO("[sim] pdm32 on '{}' (tx '{}'), {} time", config.can.rxKey, config.can.txKey,
-                        config.stepped ? "stepped" : "real");
+            SPDLOG_INFO("[sim] pdm32: {}, {} time", server->describe_ports(),
+                        server->options().config.stepped ? "stepped" : "real");
             health.markReady();
             if (!options.control_socket.empty()) {
                 agent_control::announceReady(options.control_socket);

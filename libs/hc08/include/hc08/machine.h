@@ -6,7 +6,8 @@
 //
 // The run loop runs the CPU in quanta up to the earliest device event (no event queue: each Timed device reports
 // next_event()). A device access that moves an event earlier ends the quantum after that instruction. At a quantum's
-// end every due device is synced, Input devices first. A run cut into run_until() calls anywhere equals one uncut run.
+// end every due device is synced, Input devices first (emu::Schedule). A run cut into run_until() calls anywhere equals
+// one uncut run.
 #pragma once
 
 #include <algorithm>
@@ -26,6 +27,7 @@
 #include "hc08/engines.h"
 #include "hc08/memmap.h"
 #include "emu/irq_line.h"
+#include "emu/timed.h"
 
 namespace sim::sys {
 
@@ -50,14 +52,15 @@ class Machine final : public IrqSink {
     CpuState cpu;
 
     // ------------------------------------------------------------------ composition
-    // Devices are added in order: the order of snapshots and of events due on the same tick.
-    void add(std::shared_ptr<Periph> device);
+    // Devices are added in order: the order of snapshots and of events due on the same tick. A Periph is given the
+    // machine (Periph::m); any other Timed device (no register window) is only scheduled, reset and snapshotted.
+    void add(std::shared_ptr<Timed> device);
     // maps [base, base + size) of the address space to `device` at offsets `offset`..
     void map(uint16_t base, uint32_t size, Periph& device, uint16_t offset = 0);
 
     template <class T>
     T* find() const {
-        for (const std::shared_ptr<Periph>& p : devices_) {
+        for (const std::shared_ptr<Timed>& p : devices_) {
             if (T* t = dynamic_cast<T*>(p.get())) {
                 return t;
             }
@@ -65,9 +68,9 @@ class Machine final : public IrqSink {
         return nullptr;
     }
 
-    Periph* find(std::string_view name) const;
+    Timed* find(std::string_view name) const;
 
-    const std::vector<std::shared_ptr<Periph>>& devices() const {
+    const std::vector<std::shared_ptr<Timed>>& devices() const {
         return devices_;
     }
 
@@ -273,13 +276,12 @@ class Machine final : public IrqSink {
     void device_write(uint16_t addr, uint8_t value);
     void after_device_access(Periph& device);
     void check_data_watch(uint16_t addr, uint8_t value, bool write);
-    void sync_due(uint64_t t);
-    uint64_t earliest_event() const;
     Stop run_engine();
     void enter_mode(CpuMode mode);
 
-    std::vector<std::shared_ptr<Periph>> devices_;
-    std::vector<Periph*> timed_;  // Input devices first, then Timed
+    std::vector<std::shared_ptr<Timed>> devices_;
+    std::vector<Periph*> periphs_;  // the devices with a register window, for the CPU08's notifications
+    Schedule schedule_;
 
     uint64_t base_tick_ = 0;
     uint64_t base_cycles_ = 0;

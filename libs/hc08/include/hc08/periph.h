@@ -1,8 +1,10 @@
-// A peripheral: a device with a register window, a time base and an interrupt source or more.
+// A peripheral: a timed device (emu/timed.h) with a register window in the CPU08's address space, and an interrupt
+// source or more.
 //
 // Devices are lazy, as in mk60e5: a Timed device says when its next event is (next_event, in ticks) and catches up to
 // a time when asked (sync). The machine syncs a device before every register access and at its events, so a device
-// never runs a clock of its own. An Input device (the stimulus) is synced before the others at the same tick.
+// never runs a clock of its own. A device with no register window (the PDM board, the stimulus) is an emu::Timed and
+// is scheduled the same way.
 #pragma once
 
 #include <cstdint>
@@ -12,13 +14,12 @@
 #include <vector>
 
 #include "emu/common.h"
+#include "emu/timed.h"
 #include "hc08/memmap.h"
 
 namespace sim::sys {
 
 class Machine;
-
-enum class Timing : uint8_t { Passive, Timed, Input };
 
 // A named register, for the debugger's DEVICE.NAME reads and the agent's register dumps.
 struct DeviceRegister {
@@ -26,17 +27,9 @@ struct DeviceRegister {
     uint16_t offset;
 };
 
-class Periph : public Device {
+class Periph : public Timed, public Device {
    public:
-    explicit Periph(std::string name, Timing timing = Timing::Passive) : name_(std::move(name)), timing_(timing) {
-    }
-
-    const std::string& name() const {
-        return name_;
-    }
-
-    Timing timing() const {
-        return timing_;
+    explicit Periph(std::string name, Timing timing = Timing::Passive) : Timed(std::move(name), timing) {
     }
 
     uint8_t read(uint16_t offset) final {
@@ -53,16 +46,6 @@ class Periph : public Device {
         return rd(offset);
     }
 
-    // The tick of the next event (kNever: none). Must be after the time of the last sync once that sync is done.
-    virtual uint64_t next_event() const {
-        return kNever;
-    }
-
-    // Catch up to `now` (ticks): raise the flags and interrupts due by then.
-    virtual void sync(uint64_t now) {
-        (void)now;
-    }
-
     // The bus clock changed (the PLL was switched): the device was synced to `now` at the old rate first.
     virtual void bus_clock_changed(uint64_t now) {
         (void)now;
@@ -74,18 +57,6 @@ class Periph : public Device {
         (void)now;
     }
 
-    // A reset (power-on, COP, illegal opcode): registers to their reset values.
-    virtual void reset() {
-    }
-
-    virtual void save(std::vector<uint8_t>& out) const {
-        (void)out;
-    }
-
-    virtual void load(const uint8_t*& in) {
-        (void)in;
-    }
-
     virtual std::span<const DeviceRegister> registers() const {
         return {};
     }
@@ -95,10 +66,6 @@ class Periph : public Device {
    protected:
     virtual uint8_t rd(uint16_t offset) = 0;
     virtual void wr(uint16_t offset, uint8_t value) = 0;
-
-   private:
-    std::string name_;
-    Timing timing_;
 };
 
 }  // namespace sim::sys

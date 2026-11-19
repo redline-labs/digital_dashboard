@@ -20,6 +20,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "host/control.h"
 #include "pdm32/top/instance.h"
 
 namespace sim::sys {
@@ -32,8 +33,5 @@ std::optional<uint16_t> address_of(const Instance& instance, const std::string& 
 
 // Sets a name. Connector names always; memory only with `allow_memory`. Returns "" or the error.
 std::string set_name(Instance& instance, const std::string& name, const nlohmann::json& value, bool allow_memory);
-
-// Parses "0x1A", "$1A", "26" or a JSON number.
-std::optional<double> parse_number(const nlohmann::json& value);
 
 }  // namespace sim::sys

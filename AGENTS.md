@@ -126,12 +126,20 @@ discovery seeing only live traffic, and what `accepted: false` and
   scratch state out of a deployment manifest. `sims/` is workstation-only too.
 - **A simulator is the device, not a sim protocol.** `sims/` runs the device's
   own firmware and puts it on the topics, in the schema, that the real device's
-  bridge would: `pdm32_sim serve` publishes through can_zenoh's
-  `BridgedChannel`, the same code `can_bridge` uses, so nothing downstream can
-  tell. Do not give a simulator a socket or topic format of its own. The
-  firmware it runs is the vendor's and never enters the tree; neither does what
+  bridge would: every `serve` is `sims/host`'s `DeviceServer`, which publishes
+  each CAN port through can_zenoh's `BridgedChannel`, the same code `can_bridge`
+  uses, so nothing downstream can tell. Do not give a simulator a socket or
+  topic format of its own. A device plugs into the host as a `ServedDevice`;
+  its CPU (`libs/hc08`, ...) schedules devices through `libs/emu`'s `Timed` and
+  `Schedule`, so the host and the board layers stay CPU-neutral.
+- **No target code in the tree.** The firmware a simulator runs is the
+  vendor's, and any image built for an emulated part (a kernel, an M1
+  application) is built and kept outside the tree; neither does what
   `pdm_flash_dump` reads off a unit (`*.hex`, `*.s19`, `dumps/` are ignored).
-  Its tests skip without the image (`PDM_FIRMWARE_HEX`). See docs/sims/.
+  Tests that need an image skip without it (`PDM_FIRMWARE_HEX`). A hardware
+  description is structure, not code: `sims/m150/board/topology/m150.cpp`
+  holds the M150's, as tables we maintain (the vendor's description file is
+  not in the tree and nothing regenerates from it). See docs/sims/.
 - **Where samples come from is one interface.** `scope::DataSource` has two
   implementations -- the live bus and a recording -- and nothing above it knows
   which it has. Swapping between them (`ScopeSession::setSource()`) has ONE
@@ -493,8 +501,14 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     estimation problem, no bus) + calibration_store (what
                     it learned, kept in SQLite) -- docs/design/state-estimation.md
 sims/               emulators standing in for hardware, WORKSTATION ONLY:
+  host/             what every `serve` is: the real-time/stepped loop, CAN
+                    ports bridged onto zenoh, the serve config, agent-method
+                    plumbing; a device plugs in as a ServedDevice
+  tools/            check_layers.py (each simulator's include direction)
   pdm32/            a MoTeC PDM32 (its firmware on libs/gz60), pdm32_sim
                     serve|run|images|disasm -- docs/sims/pdm32.md
+  m150/             a MoTeC M150 (MPC55xx, e200) -- in progress: the board's
+                    topology so far -- docs/design/m150-sim.md
 nodes/              single-purpose executables that bridge hardware to zenoh,
                     plus map_server (a file rather than hardware) and the two
                     tools: inspect (look at the bus) and bag (record and replay

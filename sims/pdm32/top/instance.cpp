@@ -118,7 +118,7 @@ Instance::Instance(InstanceConfig config) : cfg(std::move(config)), board(Machin
     }
     install_boot_stand_in(board);
 
-    stimulus = std::make_shared<Stimulus>(board, harness);
+    stimulus = std::make_shared<Stimulus>(board, harness, Clock([this] { return m().now(); }, &m().cfg.tick_hz));
     m().add(stimulus);
 
     if (std::filesystem::exists(cfg.symbols_path)) {

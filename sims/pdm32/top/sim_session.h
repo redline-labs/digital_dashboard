@@ -7,7 +7,7 @@
 #include <optional>
 #include <string>
 
-#include "pdm32/top/control.h"
+#include "host/control.h"
 #include "pdm32/top/debugger.h"
 #include "pdm32/top/instance.h"
 #include "pdm32/top/scenario.h"

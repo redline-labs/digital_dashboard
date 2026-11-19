@@ -1,4 +1,4 @@
-#include "pdm32/top/sim_channel.h"
+#include "host/sim_channel.h"
 
 #include <spdlog/fmt/fmt.h>
 

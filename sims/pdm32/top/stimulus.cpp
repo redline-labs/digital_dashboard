@@ -6,8 +6,8 @@
 
 namespace sim::sys {
 
-Stimulus::Stimulus(Pdm32Board& board, plant::Harness& harness)
-    : Periph("stimulus", Timing::Input), board_(board), harness_(harness) {
+Stimulus::Stimulus(Pdm32Board& board, plant::Harness& harness, Clock clock)
+    : Timed("stimulus", Timing::Input), board_(board), clock_(std::move(clock)), harness_(harness) {
 }
 
 void Stimulus::schedule(uint64_t t_ticks, std::string what, std::function<void()> action) {
@@ -46,21 +46,21 @@ void Stimulus::sync(uint64_t now) {
     while (!events_.empty() && events_.front().t <= now) {
         Event e = std::move(events_.front());
         events_.erase(events_.begin());
-        SPDLOG_DEBUG("stimulus: t={:.4f} {}", double(e.t) / double(m->cfg.tick_hz), e.what);
+        SPDLOG_DEBUG("stimulus: t={:.4f} {}", double(e.t) / double(clock_.hz()), e.what);
         e.action();
         changed = true;
     }
 
     if (now >= next_step_) {
         // the plant over the last step, with the currents the board drove
-        const double dt = double(now - last_plant_) / double(m->cfg.tick_hz);
+        const double dt = double(now - last_plant_) / double(clock_.hz());
         std::array<double, 32> currents{};
         for (size_t k = 0; k < Pdm32Board::kOutputs; k++) {
             currents[k] = board_.output(k).current();
         }
         harness_.step(dt, currents);
         last_plant_ = now;
-        next_step_ = now + kStepUs * m->ticks_per_us();
+        next_step_ = now + kStepUs * clock_.ticks_per_us();
         changed = true;
     }
 

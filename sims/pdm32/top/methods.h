@@ -6,16 +6,11 @@
 #include <functional>
 
 #include "agent_control/dispatcher.h"
-#include "pdm32/top/control.h"
+#include "host/control.h"
+#include "host/served_device.h"
 #include "pdm32/top/sim_session.h"
 
 namespace sim::sys {
-
-struct ServerHooks {
-    std::function<void()> quit;
-    std::function<json(bool pause)> pause_continue;  // realtime only (null in stepped mode)
-    bool realtime = false;
-};
 
 void register_methods(agent_control::Dispatcher& dispatcher, SimSession& session, ServerHooks hooks);
 

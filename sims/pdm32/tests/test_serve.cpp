@@ -21,7 +21,8 @@
 #include "pub_sub/session_manager.h"
 #include "pub_sub/zenoh_publisher.h"
 #include "pub_sub/zenoh_subscriber.h"
-#include "server.h"
+#include "host/server.h"
+#include "pdm32/top/served.h"
 
 namespace {
 
@@ -48,21 +49,24 @@ int main() {
     }
 
     const std::string prefix = "test/pdm32_sim/p" + std::to_string(::getpid());
-    pdm32::ServeOptions options;
-    options.config.can.rxKey = prefix + "/rx";
-    options.config.can.txKey = prefix + "/tx";
-    options.config.scenario = std::string(PDM32_SCENARIO_DIR) + "/short_output.json";
+    using namespace sim::sys;
+    ServeOptions options;
+    options.schema = pdm32_serve_schema();
+    options.config = default_serve_config(options.schema);
+    options.config.can[0].bridge.rxKey = prefix + "/rx";
+    options.config.can[0].bridge.txKey = prefix + "/tx";
+    options.config.device["scenario"] = std::string(PDM32_SCENARIO_DIR) + "/short_output.json";
 
     std::mutex mutex;
     std::map<uint32_t, int> counts;
     std::string channel_name;
-    pub_sub::ZenohTypedSubscriber<::CanFrame> subscriber(options.config.can.rxKey, [&](::CanFrame::Reader message) {
+    pub_sub::ZenohTypedSubscriber<::CanFrame> subscriber(options.config.can[0].bridge.rxKey, [&](::CanFrame::Reader message) {
         const std::lock_guard<std::mutex> lock(mutex);
         counts[message.getId()]++;
         channel_name = message.getChannel();
     });
 
-    pdm32::Server server(options);
+    DeviceServer server(options, std::make_unique<Pdm32Served>(pdm32_session_options(options.config, false)));
     std::atomic<bool> ready{false};
     std::thread loop([&] { server.run([&] { ready = true; }); });
     while (!ready) {
@@ -88,7 +92,7 @@ int main() {
 
     // Into the PDM.
     {
-        pub_sub::ZenohPublisher<::CanFrame> publisher(options.config.can.txKey);
+        pub_sub::ZenohPublisher<::CanFrame> publisher(options.config.can[0].bridge.txKey);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         helpers::CanFrame frame;
         frame.id = 0x123;

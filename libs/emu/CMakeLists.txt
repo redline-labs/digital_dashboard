@@ -6,3 +6,7 @@
 add_library(emu INTERFACE)
 target_include_directories(emu INTERFACE include)
 target_link_libraries(emu INTERFACE helpers spdlog::spdlog)
+
+add_executable(emu_test_timed tests/test_timed.cpp)
+target_link_libraries(emu_test_timed PRIVATE emu mctest)
+add_project_test(TARGET emu_test_timed LABELS emu unit)

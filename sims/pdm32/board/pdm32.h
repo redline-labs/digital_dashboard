@@ -25,7 +25,7 @@
 
 namespace sim::sys {
 
-class Pdm32Board final : public Periph {
+class Pdm32Board final : public Timed {
    public:
     static constexpr size_t kOutputs = 32;
     static constexpr size_t kInputs = 23;
@@ -72,19 +72,13 @@ class Pdm32Board final : public Periph {
     // The ADC pin voltage for (channel, mux address): the scaled analog of the signal the multiplexers select.
     double adc_pin(int channel, uint8_t mux) const;
 
-    // Periph: the 100 us thermal step
+    // Timed: the 100 us thermal step
     static constexpr uint64_t kStepUs = 100;
     uint64_t next_event() const override;
     void sync(uint64_t now) override;
     void save(std::vector<uint8_t>& out) const override;
     void load(const uint8_t*& in) override;
 
-   protected:
-    uint8_t rd(uint16_t) override {
-        return 0;
-    }
-    void wr(uint16_t, uint8_t) override {
-    }
 
    private:
     void update_gates(uint64_t now);
