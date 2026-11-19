@@ -52,12 +52,25 @@ toolchain for it.
 The tables are maintained by hand; `tests/test_topology.cpp` checks that every name one table uses resolves in
 another, so an edit that leaves a dangling reference fails the build's tests.
 
+## Running an image
+
+```bash
+cmake -S . -B build -DM150_IMAGE=/path/to/m150_mvp.bin   # enables m150_test_boot
+build/sims/m150/m150_sim run /path/to/m150_mvp.bin --seconds 2 [--candump-in in.log] [--engine jit]
+```
+
+The image is a raw 2 MB image of the internal flash: a kernel whose reset configuration is at 0, and the application
+it loads. MoTeC's kernel is encrypted and is not run; the research tree's MVP kernel stands in for it with the
+system-call ABI the application expects. The console (eSCI A) goes to stderr, every frame on the three buses to stdout
+in candump format.
+
 ## Phases
 
 | Phase | Done when |
 |---|---|
 | 1. Shared infrastructure, the PDM moved onto it | Done: `libs/emu` `Timed`/`Schedule`, `sims/host`, the PDM on them with its tests, serve and the MCP tools unchanged. |
 | 2. `libs/e200` interpreter and JIT | Done: the core, MMU, SPE and machine with interpreter, block and AArch64 JIT engines; tests from programs assembled in the tests, and the engines held to the interpreter on random programs. |
-| 3. `libs/mpc55xx` and the M150 board | A bare image echoes CAN frames through FlexCAN and the INTC onto zenoh. |
-| 4. `m150_sim serve` | An outside image (kernel and application) boots and puts its traffic on `vehicle/can0`; tests skip without it. |
+| 3. `libs/mpc55xx` and the M150 board | Done: the MPC5554 (boot ROM's reset work, INTC, FlexCAN A-C, eSCI A, stubs); a bare image assembled in the test echoes CAN frames by interrupt. |
+| 4a. `m150_sim run` | Done: an outside image (an MVP kernel with an M1 application built by M1 Build) boots, transmits on CAN A and answers what it receives, identically on every engine; `m150_test_boot` skips without `M150_IMAGE`. |
+| 4b. `m150_sim serve` | The three CAN ports through `sims/host` onto `vehicle/can0` and the others. |
 | 5. Engine speed, I/O | Block chaining and an x86-64 JIT backend; the I/O resources from the topology driven by a plant. |

@@ -481,9 +481,10 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
                     can + can_pcan/can_socketcan/can_motec/can_trc/can_backends
                   (CAN channels) -- docs/libs/can_motec.md for the MoTeC one,
                     can_zenoh (a channel onto zenoh topics, and zenoh: back),
-                    emu + hc08 + e200 + gz60 (what emulators are built from:
-                    wiring and the JIT's host side, the CPU08 and e200 cores
-                    and their JITs, the GZ60's modules), mctest,
+                    emu + hc08 + e200 + gz60 + mpc55xx (what emulators are
+                    built from: wiring and the JIT's host side, the CPU08 and
+                    e200 cores and their JITs, the GZ60's and the MPC5554's
+                    modules), mctest,
                     byte_stream (the stream, TCP, replay and backoff every
                     device transport shares),
                     gsof (Trimble GSOF, constexpr) + bd992 (its TCP transport),

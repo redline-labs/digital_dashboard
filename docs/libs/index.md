@@ -51,6 +51,7 @@ What the simulators under `sims/` are built from.
 | `hc08` | `hc08` | The CPU08 core: instruction set, machine, S-records, and interpreter, block and JIT engines. | [hc08](hc08.html) |
 | `e200` | `e200` | The e200z6 core (MPC55xx): Book E, the MMU, SPE single precision, a 32-bit machine, an assembler, and interpreter, block and JIT engines. | [e200](e200.html) |
 | `gz60` | `gz60` | The MC68HC908GZ60's modules around the core, MSCAN included. | [gz60](gz60.html) |
+| `mpc55xx` | `mpc55xx` | The MPC5554 around the e200 core: memory map, boot ROM's reset work, INTC, FlexCAN A-C, eSCI console, stubs. | [mpc55xx](mpc55xx.html) |
 | `mctest` | `mctest` | `TEST()`/`CHECK()` and a runner, for test programs with many small cases. Header-only. | none yet |
 
 ## Devices
