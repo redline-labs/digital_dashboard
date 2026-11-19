@@ -22,11 +22,11 @@ target_include_directories(m150_topology PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 add_library(m150_board STATIC board/m150.cpp)
 target_link_libraries(m150_board PUBLIC m150_topology mpc55xx)
 
-add_library(m150_top STATIC top/candump.cpp)
-target_link_libraries(m150_top PUBLIC m150_board)
+add_library(m150_top STATIC top/candump.cpp top/served.cpp)
+target_link_libraries(m150_top PUBLIC m150_board sim_host)
 
-add_executable(m150_sim main.cpp)
-target_link_libraries(m150_sim PRIVATE m150_top)
+add_executable(m150_sim main.cpp verbs.cpp)
+target_link_libraries(m150_sim PRIVATE m150_top core cli node_health zenoh_pub_sub)
 
 add_executable(m150_test_topology tests/test_topology.cpp)
 target_link_libraries(m150_test_topology PRIVATE m150_topology mctest)
@@ -39,6 +39,13 @@ add_executable(m150_test_boot tests/test_boot.cpp)
 target_link_libraries(m150_test_boot PRIVATE m150_top mctest)
 add_project_test(TARGET m150_test_boot LABELS m150 unit)
 set_tests_properties(m150_test_boot PROPERTIES ENVIRONMENT "M150_IMAGE=${M150_IMAGE}")
+
+# serve in-process over zenoh: the application's frames on CAN1's rx topic,
+# frames from its tx topic into the application, the methods. Skips without
+# M150_IMAGE or a zenoh session.
+add_executable(m150_test_serve tests/test_serve.cpp)
+target_link_libraries(m150_test_serve PRIVATE m150_top zenoh_pub_sub schemas capnp spdlog::spdlog)
+add_project_test(TARGET m150_test_serve LABELS m150 net slow ENVIRONMENT "M150_IMAGE=${M150_IMAGE}")
 
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
