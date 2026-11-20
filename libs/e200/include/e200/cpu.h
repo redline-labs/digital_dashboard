@@ -568,6 +568,7 @@ inline Stop execute_insn(CpuState& s, Env& env, const Insn& in) {
     const uint32_t pc = s.pc;
     uint32_t next = pc + 4;
     s.cycles += 1;
+    s.instructions += 1;
 
     auto rd = [&](uint32_t v) { s.gpr[in.d] = v; };
     auto ra = [&](uint32_t v) {

@@ -1,9 +1,8 @@
-// The agent methods: the session (hello, status, run, step, finish, reset), the connector (inputs, outputs,
-// input.set, load.set, battery.set, set), CAN (can.send, can.recv, signals), the debugger (break, watch, clear, list,
-// records, read, write, names, backtrace, disasm, memory) and snapshots.
+// The agent methods: the shared debugger's (host/debug/methods.h: hello, run, step, finish, reset, quit, pause,
+// continue, break, watch, clear, list, records, read, write, set, names, backtrace, registers, disasm, memory,
+// snapshots), and the PDM's own: status, the connector (inputs, outputs, pins, input.set, load.set, battery.set) and
+// CAN (can.send, can.recv, signals).
 #pragma once
-
-#include <functional>
 
 #include "agent_control/dispatcher.h"
 #include "host/control.h"

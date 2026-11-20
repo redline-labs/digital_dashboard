@@ -8,7 +8,7 @@
 #include <string>
 
 #include "host/control.h"
-#include "pdm32/top/debugger.h"
+#include "host/debug/session.h"
 #include "pdm32/top/instance.h"
 #include "pdm32/top/scenario.h"
 
@@ -20,16 +20,6 @@ struct SessionOptions {
     bool allow_write = false;
 };
 
-struct RunResult {
-    std::string reason;  // "time" (reached), "break", "watch", "exit"
-    double t = 0;
-    uint16_t pc = 0;
-    std::string where;
-    std::optional<int> id;  // the breakpoint or watch
-
-    json to_json() const;
-};
-
 class SimSession {
    public:
     explicit SimSession(SessionOptions options);
@@ -38,7 +28,10 @@ class SimSession {
         return *instance_;
     }
     Debugger& debugger() {
-        return *debugger_;
+        return debug_->debugger();
+    }
+    DebugSession& debug() {
+        return *debug_;
     }
     bool allow_write() const {
         return options_.allow_write;
@@ -64,21 +57,9 @@ class SimSession {
     json inputs();
 
    private:
-    RunResult run_to_tick(uint64_t target);
-    RunResult result(const std::string& reason, std::optional<int> id = std::nullopt);
-    bool step_one();
-
-    struct Saved {
-        Machine::Snapshot machine;
-        Stimulus::State stimulus;
-        plant::Harness harness;
-        std::map<std::string, ExternalCanNode::Value> signals;
-    };
-
     SessionOptions options_;
     std::unique_ptr<Instance> instance_;
-    std::unique_ptr<Debugger> debugger_;
-    std::map<std::string, Saved> snapshots_;
+    std::unique_ptr<DebugSession> debug_;
 };
 
 // The output status byte in words ("on", "fault", "overcurrent", "retries done", "off").

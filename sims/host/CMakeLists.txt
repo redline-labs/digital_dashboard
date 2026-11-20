@@ -8,6 +8,11 @@ add_library(sim_host STATIC
     serve_config.cpp
     server.cpp
     sim_channel.cpp
+    debug/debugger.cpp
+    debug/methods.cpp
+    debug/names.cpp
+    debug/session.cpp
+    debug/symbols.cpp
 )
 # Included as "host/server.h".
 target_include_directories(sim_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

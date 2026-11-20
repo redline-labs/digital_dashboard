@@ -1,5 +1,6 @@
 #include "m150/board/m150.h"
 
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -19,6 +20,14 @@ Board::Board(e200::MachineConfig config)
     fpga = std::make_shared<mpc55xx::StubModule>("fpga", 0x10000);
     m.add(fpga);
     m.map(kFpga, 0x10000, *fpga);
+}
+
+bool Board::power_on() {
+    std::memset(external_ram, 0, kExternalRamSize);
+    std::memset(soc.sram, 0, mpc55xx::map::kSramSize);
+    m.memory_changed(kExternalRam, kExternalRamSize);
+    m.memory_changed(mpc55xx::map::kSram, mpc55xx::map::kSramSize);
+    return reset();
 }
 
 void Board::load_flash_file(const std::string& path) {

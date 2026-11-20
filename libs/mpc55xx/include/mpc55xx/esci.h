@@ -39,6 +39,12 @@ class Esci final : public e200::BusDevice {
     void reset() override {
         regs_.clear();
     }
+    void save(std::vector<uint8_t>& out) const override {
+        regs_.save(out);
+    }
+    void load(const uint8_t*& in) override {
+        regs_.load(in);
+    }
 
    private:
     RegisterFile regs_;

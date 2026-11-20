@@ -4,39 +4,13 @@
 #include <cstdio>
 #include <sstream>
 
-#include "hc08/disasm.h"
 #include "helpers/hex.h"
+#include "host/debug/methods.h"
 #include "pdm32/top/probe.h"
 
 namespace sim::sys {
 
 namespace {
-
-std::vector<std::string> string_list(const json& params, const std::string& name) {
-    std::vector<std::string> out;
-    if (params.contains(name)) {
-        if (params[name].is_string()) {
-            out.push_back(params[name].get<std::string>());
-        } else if (params[name].is_array()) {
-            for (const auto& v : params[name]) {
-                out.push_back(v.get<std::string>());
-            }
-        } else {
-            throw ControlError(ControlErrorReason::BadParams, "parameter '" + name + "': expected a list of names");
-        }
-    }
-    return out;
-}
-
-json value_json(const std::optional<double>& v) {
-    if (!v) {
-        return nullptr;
-    }
-    if (std::isinf(*v)) {
-        return "inf";
-    }
-    return *v;
-}
 
 std::string hex_bytes(const uint8_t* data, size_t n) {
     return helpers::toHex(std::span<const uint8_t>(data, n), {}, helpers::HexCase::kUpper);
@@ -47,61 +21,18 @@ std::string hex_bytes(const uint8_t* data, size_t n) {
 void register_methods(agent_control::Dispatcher& dispatcher, SimSession& s, ServerHooks hooks) {
     ControlMethods d(dispatcher);
     Instance& in = s.instance();
-    Debugger& dbg = s.debugger();
-    const bool realtime = hooks.realtime;
 
-    // ------------------------------------------------------------------ session
-    d.add("hello", "the server, firmware, engine and every method with its summary", [&dispatcher, &in](const json&) {
-        return json{{"name", "pdm32_sim"},
-                    {"protocol", 1},
-                    {"firmware", in.cfg.firmware_path},
-                    {"engine", engine_name(in.m().cfg.engine)},
-                    {"symbols", in.symbols.size()},
-                    {"methods", dispatcher.methodNames()}};
-    });
+    // ------------------------------------------------------------------ the shared debugger (host/debug/methods.h)
+    DebugMethodsOptions options;
+    options.app = "pdm32_sim";
+    options.info = [&in] {
+        return json{{"firmware", in.cfg.firmware_path}, {"engine", engine_name(in.m().cfg.engine)}};
+    };
+    options.status = [&s] { return s.status(); };
+    options.reset = [&s] { s.reset(); };
+    options.allow_write = s.allow_write();
+    register_debug_methods(dispatcher, s.debug(), hooks, std::move(options));
     d.add("status", "time, pc, CPU and firmware mode, resets, CAN counters", [&s](const json&) { return s.status(); });
-    d.add("run", "advance time: {seconds} or {until} (s), or {us} / {until_us}; stops early at a break or watch",
-          [&s, realtime](const json& p) {
-              if (realtime) {
-                  throw ControlError(ControlErrorReason::WrongMode, "run: realtime mode (use pause/continue)");
-              }
-              if (const auto until = optional_real(p, "until")) {
-                  return s.run_until(*until).to_json();
-              }
-              if (const auto until_us = optional_real(p, "until_us")) {
-                  return s.run_until(*until_us / 1e6).to_json();
-              }
-              if (const auto us = optional_real(p, "us")) {
-                  return s.run_for(*us / 1e6).to_json();
-              }
-              return s.run_for(optional_real(p, "seconds").value_or(0.1)).to_json();
-          });
-    d.add("step", "{count=1, over=false}: instructions (over: a JSR/BSR runs to its return)", [&s](const json& p) {
-        return s.step(int(optional_unsigned(p, "count").value_or(1)), p.value("over", false)).to_json();
-    });
-    d.add("finish", "run until the current function returns", [&s](const json&) { return s.finish().to_json(); });
-    d.add("reset", "power-on reset of the PDM (harness, breakpoints and watches stay)", [&s](const json&) {
-        s.reset();
-        return s.status();
-    });
-    d.add("quit", "end the server", [hooks](const json&) {
-        if (hooks.quit) {
-            hooks.quit();
-        }
-        return json{{"ok", true}};
-    });
-    d.add("pause", "realtime: stop the clock", [hooks](const json&) {
-        if (!hooks.pause_continue) {
-            throw ControlError(ControlErrorReason::WrongMode, "pause: stepped mode (time only moves in run)");
-        }
-        return hooks.pause_continue(true);
-    });
-    d.add("continue", "realtime: restart the clock", [hooks](const json&) {
-        if (!hooks.pause_continue) {
-            throw ControlError(ControlErrorReason::WrongMode, "continue: stepped mode");
-        }
-        return hooks.pause_continue(false);
-    });
 
     // ------------------------------------------------------------------ the connector
     d.add("outputs", "every output: pin, volts, amps, junction temp, load, firmware status",
@@ -130,8 +61,6 @@ void register_methods(agent_control::Dispatcher& dispatcher, SimSession& s, Serv
           });
     d.add("battery.set", "{volts}",
           [setter](const json& p) { return setter("battery", json(param_real(p, "volts"))); });
-    d.add("set", "{name, value}: any settable name (in[N].v, out[N].load, battery; memory with --allow-write)",
-          [setter](const json& p) { return setter(param_string(p, "name"), p.value("value", json(nullptr))); });
 
     // ------------------------------------------------------------------ CAN
     d.add("can.send", "{id, data: hex string, extended?}: a frame to the PDM", [&s](const json& p) {
@@ -189,123 +118,6 @@ void register_methods(agent_control::Dispatcher& dispatcher, SimSession& s, Serv
               }
               return out;
           });
-
-    // ------------------------------------------------------------------ debugger
-    d.add("break", "{function | pc, condition?, action=stop|record, record?: [names], ignore?}", [&dbg](const json& p) {
-        const std::string target = p.contains("function") ? param_string(p, "function") : param_string(p, "pc");
-        const auto action = p.value("action", "stop") == "record" ? Debugger::Action::Record : Debugger::Action::Stop;
-        try {
-            const int id = dbg.add_break(target, p.value("condition", ""), action, string_list(p, "record"),
-                                         int(optional_unsigned(p, "ignore").value_or(0)));
-            return json{{"id", id}};
-        } catch (const DebugError& e) {
-            throw ControlError(ControlErrorReason::BadParams, e.what());
-        }
-    });
-    d.add("watch", "{name, on=write|read|change, condition?, action=stop|record, record?: [names]}",
-          [&dbg](const json& p) {
-              const std::string on_text = p.value("on", "write");
-              const auto on = on_text == "read"     ? Debugger::On::Read
-                              : on_text == "change" ? Debugger::On::Change
-                                                    : Debugger::On::Write;
-              const auto action =
-                  p.value("action", "stop") == "record" ? Debugger::Action::Record : Debugger::Action::Stop;
-              try {
-                  return json{{"id", dbg.add_watch(param_string(p, "name"), on, p.value("condition", ""), action,
-                                                   string_list(p, "record"))}};
-              } catch (const DebugError& e) {
-                  throw ControlError(ControlErrorReason::BadParams, e.what());
-              }
-          });
-    d.add("clear", "{id} or {all: true}", [&dbg](const json& p) {
-        if (p.value("all", false)) {
-            dbg.clear_all();
-            return json{{"ok", true}};
-        }
-        return json{{"ok", dbg.clear(int(param_unsigned(p, "id")))}};
-    });
-    d.add("list", "breakpoints and watches with their hits", [&dbg](const json&) { return dbg.list(); });
-    d.add("records", "{id=0 (all), since=0, limit=100}: what record actions captured", [&dbg](const json& p) {
-        return dbg.records(int(optional_unsigned(p, "id").value_or(0)), optional_unsigned(p, "since").value_or(0),
-                           optional_unsigned(p, "limit").value_or(100));
-    });
-    d.add("read", "{names: [...]}: values by name (t, pc, a, out[N].v, in[N].v, can:SIGNAL, SYMBOL[k], $addr, dev.REG)",
-          [&in](const json& p) {
-              json values = json::object();
-              json errors = json::object();
-              for (const std::string& n : string_list(p, "names")) {
-                  std::string error;
-                  const auto v = read_name(in, n, error);
-                  values[n] = value_json(v);
-                  if (!v) {
-                      errors[n] = error;
-                  }
-              }
-              json out{{"values", values}};
-              if (!errors.empty()) {
-                  out["errors"] = errors;
-              }
-              return out;
-          });
-    d.add("write", "{name, value}: like set; memory names need --allow-write",
-          [setter](const json& p) { return setter(param_string(p, "name"), p.value("value", json(nullptr))); });
-    d.add("names", "{filter?, limit=50}: firmware symbols", [&in](const json& p) {
-        json out = json::array();
-        for (const Symbol* sym : in.symbols.search(p.value("filter", ""), optional_unsigned(p, "limit").value_or(50))) {
-            out.push_back(json{{"name", sym->name},
-                               {"address", sym->address},
-                               {"size", sym->size},
-                               {"kind", sym->kind},
-                               {"comment", sym->comment}});
-        }
-        return out;
-    });
-    d.add("backtrace", "the pc and the return addresses on the stack (heuristic)",
-          [&dbg](const json&) { return dbg.backtrace(); });
-    d.add("disasm", "{at (address or function; default pc), count=16}", [&in](const json& p) {
-        uint16_t pc = in.m().cpu.pc;
-        if (const auto at = optional_string(p, "at")) {
-            if (const Symbol* sym = in.symbols.find(*at)) {
-                pc = sym->address;
-            } else if (const auto a = parse_number(nlohmann::json(*at))) {
-                pc = uint16_t(*a);
-            } else {
-                throw ControlError(ControlErrorReason::BadParams, "disasm: unknown address '" + *at + "'");
-            }
-        } else if (const auto a = optional_unsigned(p, "at")) {
-            pc = uint16_t(*a);
-        }
-        json out = json::array();
-        const int count = int(optional_unsigned(p, "count").value_or(16));
-        for (int k = 0; k < count; k++) {
-            const Insn insn = decode(pc, [&in](uint16_t a) { return in.m().mem.bytes[a]; });
-            out.push_back(json{{"pc", pc}, {"where", in.symbols.describe(pc)}, {"text", disassemble(insn, pc)}});
-            pc = uint16_t(pc + insn.length);
-        }
-        return out;
-    });
-    d.add("memory", "{address, length=16}: bytes as hex (device registers without side effects)", [&in](const json& p) {
-        const uint16_t addr = uint16_t(param_unsigned(p, "address"));
-        const size_t length = std::min<uint64_t>(optional_unsigned(p, "length").value_or(16), 4096);
-        std::vector<uint8_t> bytes;
-        for (size_t k = 0; k < length; k++) {
-            bytes.push_back(in.m().peek(uint16_t(addr + k)));
-        }
-        return json{{"address", addr}, {"hex", hex_bytes(bytes.data(), bytes.size())}};
-    });
-
-    // ------------------------------------------------------------------ snapshots
-    d.add("snapshot", "{name}: save the whole state (machine, harness, scheduled events)", [&s](const json& p) {
-        s.snapshot(param_string(p, "name"));
-        return json{{"ok", true}, {"snapshots", s.snapshot_names()}};
-    });
-    d.add("restore", "{name}", [&s](const json& p) {
-        if (!s.restore(param_string(p, "name"))) {
-            throw ControlError(ControlErrorReason::Failed, "no snapshot named '" + p.value("name", "") + "'");
-        }
-        return s.status();
-    });
-    d.add("snapshots", "the saved snapshots' names", [&s](const json&) { return s.snapshot_names(); });
 }
 
 }  // namespace sim::sys

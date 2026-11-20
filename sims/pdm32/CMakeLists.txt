@@ -33,7 +33,6 @@ add_library(pdm32_sim_core STATIC
     board/pdm32.cpp
     board/wiring.cpp
     plant/loads.cpp
-    top/debugger.cpp
     top/instance.cpp
     top/methods.cpp
     top/probe.cpp
@@ -41,7 +40,7 @@ add_library(pdm32_sim_core STATIC
     top/served.cpp
     top/sim_session.cpp
     top/stimulus.cpp
-    top/symbols.cpp
+    top/target.cpp
 )
 # Included as "pdm32/board/pdm32.h".
 target_include_directories(pdm32_sim_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -109,14 +108,15 @@ if(Python3_FOUND)
 endif()
 
 # The sim_* MCP tools against this build's pdm32_sim, through the supervisor
-# (tools/mcp_dashboard/tests). Needs uv; skips without the firmware image.
+# (tools/mcp_dashboard/tests), the PDM's and the M150's. Needs uv; each skips
+# without its image.
 find_program(UV_PROGRAM uv)
 if(UV_PROGRAM)
     add_test(NAME pdm32_test_mcp
         COMMAND ${UV_PROGRAM} run --with pytest pytest -q tests
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tools/mcp_dashboard)
     set_tests_properties(pdm32_test_mcp PROPERTIES LABELS "pdm32;slow"
-        ENVIRONMENT "REDLINE_BUILD_DIR=${CMAKE_BINARY_DIR};${_pdm32_firmware_env};PUB_SUB_NO_DISCOVERY=1")
+        ENVIRONMENT "REDLINE_BUILD_DIR=${CMAKE_BINARY_DIR};${_pdm32_firmware_env};PUB_SUB_NO_DISCOVERY=1;M150_IMAGE=${M150_IMAGE};M150_SYMBOLS=${M150_SYMBOLS}")
 endif()
 
 # The engines on the real firmware. A measurement, not a test.

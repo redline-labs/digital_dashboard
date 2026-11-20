@@ -17,8 +17,9 @@
 #include "pdm32/top/scenario.h"
 #include "pdm_flash_dump/dump.h"
 #include "pdm_flash_dump/session.h"
+#include "host/server.h"
+#include "pdm32/top/served.h"
 #include "pub_sub/session_manager.h"
-#include "server.h"
 
 namespace {
 
@@ -31,7 +32,7 @@ void check(bool condition, const std::string& what) {
     }
 }
 
-nlohmann::json call(pdm32::Server& server, const std::string& method) {
+nlohmann::json call(sim::sys::DeviceServer& server, const std::string& method) {
     return nlohmann::json::parse(server.dispatcher().handleLine(
         nlohmann::json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", method}}.dump()))["result"];
 }
@@ -51,11 +52,14 @@ int main() {
 
     const std::string prefix = "test/pdm_flash_dump/p" + std::to_string(::getpid());
     const std::string scenario_path = std::string(PDM32_SCENARIO_DIR) + "/short_output.json";
-    pdm32::ServeOptions options;
-    options.config.can.rxKey = prefix + "/rx";
-    options.config.can.txKey = prefix + "/tx";
-    options.config.scenario = scenario_path;
-    pdm32::Server server(options);
+    using namespace sim::sys;
+    ServeOptions options;
+    options.schema = pdm32_serve_schema();
+    options.config = default_serve_config(options.schema);
+    options.config.can[0].bridge.rxKey = prefix + "/rx";
+    options.config.can[0].bridge.txKey = prefix + "/tx";
+    options.config.device["scenario"] = scenario_path;
+    DeviceServer server(options, std::make_unique<Pdm32Served>(pdm32_session_options(options.config, false)));
     std::atomic<bool> ready{false};
     std::thread loop([&] { server.run([&] { ready = true; }); });
     while (!ready) {

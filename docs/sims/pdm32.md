@@ -112,11 +112,12 @@ app_launch(app="pdm32_sim",
            extra_args=["--scenario", "sims/pdm32/scenarios/short_output.json"])
 ```
 
+Its debugger is the one every simulator shares (see [Simulators](index.html)).
 The `sim_*` tools change what is wired (`sim_set_input`, `sim_set_load`,
 `sim_set_battery`), read it back (`sim_outputs`, `sim_inputs`, `sim_read`,
 `sim_signals` for the decoded data stream, `sim_can_recv` for the frames), and
 debug the firmware (`sim_break`, `sim_watch`, `sim_step`, `sim_backtrace`,
-`sim_memory`, `sim_snapshot`). A breakpoint hit in real time pauses
+`sim_memory`, `sim_registers`, `sim_snapshot`). A breakpoint hit in real time pauses
 the clock until `sim_continue`.
 
 {: .note }

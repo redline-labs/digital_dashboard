@@ -2,18 +2,10 @@
 
 #include <cmath>
 
-#include "hc08/disasm.h"
 #include "pdm32/top/probe.h"
+#include "pdm32/top/target.h"
 
 namespace sim::sys {
-
-json RunResult::to_json() const {
-    json j{{"reason", reason}, {"t", t}, {"pc", pc}, {"where", where}};
-    if (id) {
-        j["id"] = *id;
-    }
-    return j;
-}
 
 std::string describe_output_status(uint8_t status) {
     std::string out;
@@ -35,110 +27,26 @@ std::string describe_output_status(uint8_t status) {
 
 SimSession::SimSession(SessionOptions options) : options_(std::move(options)) {
     instance_ = std::make_unique<Instance>(options_.instance);
-    debugger_ = std::make_unique<Debugger>(*instance_);
+    debug_ = std::make_unique<DebugSession>(instance_->target());
     if (options_.scenario) {
         prepare_scenario(*instance_, *options_.scenario);
     }
 }
 
-RunResult SimSession::result(const std::string& reason, std::optional<int> id) {
-    RunResult r;
-    r.reason = reason;
-    r.t = instance_->seconds();
-    r.pc = instance_->m().cpu.pc;
-    r.where = debugger_->where(r.pc);
-    r.id = id;
-    return r;
-}
-
-RunResult SimSession::run_to_tick(uint64_t target) {
-    Machine& m = instance_->m();
-    m.clear_exit();
-    for (;;) {
-        const Stop stop = m.run_until(target);
-        switch (stop.kind) {
-            case StopKind::Watch:
-                if (debugger_->on_pc(stop.pc)) {
-                    m.cpu.skip_watch_pc = stop.pc;  // the next run passes it
-                    return result("break", debugger_->last_breakpoint());
-                }
-                m.cpu.skip_watch_pc = stop.pc;
-                continue;
-            case StopKind::Break:
-                return result("watch", debugger_->take_watch_hit());
-            case StopKind::Exit:
-                return result("exit");
-            case StopKind::None:
-            case StopKind::Limit:
-            case StopKind::Wait:
-            case StopKind::StopMode:
-            case StopKind::Illegal:
-                return result("time");
-        }
-    }
-}
-
 RunResult SimSession::run_until(double t_seconds) {
-    return run_to_tick(instance_->ticks(t_seconds));
+    return debug_->run_until(t_seconds);
 }
 
 RunResult SimSession::run_for(double seconds) {
-    return run_to_tick(instance_->m().now() + instance_->ticks(seconds));
-}
-
-bool SimSession::step_one() {
-    Machine& m = instance_->m();
-    const uint64_t cycles = m.cpu.cycles;
-    m.cpu.skip_watch_pc = m.cpu.pc;
-    // a sleeping CPU: time passes until an interrupt wakes it (at most a second)
-    const uint64_t give_up = m.now() + m.cfg.tick_hz;
-    while (m.cpu.cycles == cycles && m.now() < give_up) {
-        const Stop stop = m.run_until(m.now() + 1);
-        if (stop.kind == StopKind::Break || stop.kind == StopKind::Exit) {
-            return false;
-        }
-    }
-    return m.cpu.cycles != cycles;
+    return debug_->run_for(seconds);
 }
 
 RunResult SimSession::step(int count, bool over) {
-    Machine& m = instance_->m();
-    for (int k = 0; k < count; k++) {
-        const Insn insn = decode(m.cpu.pc, [&m](uint16_t a) { return m.fetch(a); });
-        if (over && (insn.op == Op::Jsr || insn.op == Op::Bsr)) {
-            const uint16_t back = uint16_t(m.cpu.pc + insn.length);
-            const uint16_t sp = m.cpu.sp;
-            if (!step_one()) {
-                return result("watch", debugger_->take_watch_hit());
-            }
-            // run to the return address at this stack depth
-            while (!(m.cpu.pc == back && m.cpu.sp >= sp)) {
-                if (!step_one()) {
-                    return result("watch", debugger_->take_watch_hit());
-                }
-            }
-            continue;
-        }
-        if (!step_one()) {
-            return result("watch", debugger_->take_watch_hit());
-        }
-    }
-    return result("step");
+    return debug_->step(count, over);
 }
 
 RunResult SimSession::finish() {
-    Machine& m = instance_->m();
-    const uint16_t sp = m.cpu.sp;
-    for (int k = 0; k < 10'000'000; k++) {
-        const Insn insn = decode(m.cpu.pc, [&m](uint16_t a) { return m.fetch(a); });
-        if (!step_one()) {
-            return result("watch", debugger_->take_watch_hit());
-        }
-        if ((insn.op == Op::Rts || insn.op == Op::Rti) && m.cpu.sp > sp) {
-            return result("finish");
-        }
-    }
-    return result("time");
+    return debug_->finish();
 }
 
 void SimSession::reset() {
@@ -146,28 +54,15 @@ void SimSession::reset() {
 }
 
 void SimSession::snapshot(const std::string& name) {
-    snapshots_[name] =
-        Saved{instance_->m().snapshot(), instance_->stimulus->state(), instance_->harness, instance_->can_node.signals};
+    debug_->snapshot(name);
 }
 
 bool SimSession::restore(const std::string& name) {
-    const auto it = snapshots_.find(name);
-    if (it == snapshots_.end()) {
-        return false;
-    }
-    instance_->m().restore(it->second.machine);
-    instance_->stimulus->restore(it->second.stimulus);
-    instance_->harness = it->second.harness;
-    instance_->can_node.signals = it->second.signals;
-    return true;
+    return debug_->restore(name);
 }
 
 json SimSession::snapshot_names() const {
-    json out = json::array();
-    for (const auto& [name, saved] : snapshots_) {
-        out.push_back(name);
-    }
-    return out;
+    return debug_->snapshot_names();
 }
 
 void SimSession::can_send(const CanFrame& frame) {
@@ -181,7 +76,7 @@ json SimSession::status() {
     const char* run_modes[] = {"normal", "error (no valid config/cal)", "factory test", "sleep"};
     return json{{"t", m.seconds()},
                 {"pc", m.cpu.pc},
-                {"where", debugger_->where(m.cpu.pc)},
+                {"where", debug_->debugger().where(m.cpu.pc)},
                 {"cpu_mode", mode},
                 {"firmware_run_mode", run_mode},
                 {"firmware_run_mode_name", run_mode < 4 ? run_modes[run_mode] : "?"},

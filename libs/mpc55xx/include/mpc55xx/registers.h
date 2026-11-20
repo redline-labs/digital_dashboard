@@ -47,6 +47,13 @@ class RegisterFile {
     void clear() {
         std::fill(bytes_.begin(), bytes_.end(), uint8_t{0});
     }
+    void save(std::vector<uint8_t>& out) const {
+        out.insert(out.end(), bytes_.begin(), bytes_.end());
+    }
+    void load(const uint8_t*& in) {
+        std::copy(in, in + bytes_.size(), bytes_.begin());
+        in += bytes_.size();
+    }
 
    private:
     std::vector<uint8_t> bytes_;
@@ -69,6 +76,12 @@ class StubModule final : public e200::BusDevice {
     void write(uint32_t offset, unsigned size, uint32_t value) override;
     void reset() override {
         regs_.clear();
+    }
+    void save(std::vector<uint8_t>& out) const override {
+        regs_.save(out);
+    }
+    void load(const uint8_t*& in) override {
+        regs_.load(in);
     }
 
    private:

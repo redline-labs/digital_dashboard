@@ -38,7 +38,8 @@ from typing import Literal
 from .client import AgentClient
 
 AppName = Literal[
-    "dashboard", "editor", "scope", "switchboard", "map_server", "bd992_mock", "carplay_sim", "pdm32_sim"
+    "dashboard", "editor", "scope", "switchboard", "map_server", "bd992_mock", "carplay_sim", "pdm32_sim",
+    "m150_sim",
 ]
 
 
@@ -141,6 +142,17 @@ APPS: dict[str, AppSpec] = {
         # extra_args=["--firmware", path]. A scenario sets up loads and inputs:
         # extra_args=["--scenario", "sims/pdm32/scenarios/short_output.json"].
         # Add "--stepped" for time that moves only on sim_run / sim_step.
+        default_args=("serve",),
+    ),
+    "m150_sim": AppSpec(
+        binaries=("sims/m150/m150_sim",),
+        # Like pdm32_sim: simulator methods on --mcp (sim_* tools, app_call), no widgets.
+        controllable=True,
+        pickable=False,
+        ready_marker="AGENT_READY",
+        # Needs a flash image built outside the tree: M150_IMAGE in the server's environment, or
+        # extra_args=["--image", path]; ["--symbols", "kernel.elf,app.elf"] for names. Add "--stepped" for time
+        # that moves only on sim_run / sim_step.
         default_args=("serve",),
     ),
 }

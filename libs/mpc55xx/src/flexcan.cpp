@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "emu/snapshot_io.h"
+
 namespace sim::mpc55xx {
 
 namespace {
@@ -43,6 +45,22 @@ void FlexCan::reset() {
     regs_.set32(kRx15Mask, 0x1FFFFFFF);
     tx_buffer_ = -1;
     tx_done_ = kNever;
+}
+
+void FlexCan::save(std::vector<uint8_t>& out) const {
+    regs_.save(out);
+    sys::put_value(out, tx_buffer_);
+    sys::put_value(out, tx_done_);
+    sys::put_value(out, sent_);
+    sys::put_value(out, received_);
+}
+
+void FlexCan::load(const uint8_t*& in) {
+    regs_.load(in);
+    sys::get_value(in, tx_buffer_);
+    sys::get_value(in, tx_done_);
+    sys::get_value(in, sent_);
+    sys::get_value(in, received_);
 }
 
 bool FlexCan::running() const {

@@ -16,7 +16,7 @@
 #include "hc08/engines.h"
 #include "dbc_parser/ast.h"
 #include "pdm32/top/stimulus.h"
-#include "pdm32/top/symbols.h"
+#include "host/debug/symbols.h"
 
 namespace sim::sys {
 
@@ -63,9 +63,12 @@ class ExternalCanNode final : public CanNode {
     std::map<std::string, Value> signals;
 };
 
+class Pdm32Target;
+
 class Instance {
    public:
     explicit Instance(InstanceConfig config);
+    ~Instance();
     Instance(const Instance&) = delete;
     Instance& operator=(const Instance&) = delete;
 
@@ -93,6 +96,14 @@ class Instance {
 
     // Runs until `seconds` of sim time.
     Stop run_until_seconds(double seconds);
+
+    // The PDM as the shared debugger sees it (pdm32/top/target.h).
+    Pdm32Target& target() {
+        return *target_;
+    }
+
+   private:
+    std::unique_ptr<Pdm32Target> target_;
 };
 
 }  // namespace sim::sys

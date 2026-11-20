@@ -42,7 +42,9 @@ std::string image_or_env(const std::string& image) {
 void addServeOptions(cxxopts::Options& options) {
     options.add_options()("c,config", "The serve config (YAML); see sims/host/serve_config.h",
                           cxxopts::value<std::string>())(
-        "stepped", "Time moves only when an agent says (run), not with the wall clock");
+        "stepped", "Time moves only when an agent says (run, step), not with the wall clock")(
+        "symbols", "Symbol files for the debugger: the image's ELF files (kernel, application), comma-separated",
+        cxxopts::value<std::string>())("allow-write", "Let agents write memory and registers");
     addImageOption(options);
     agent_control::addMcpOption(options, "m150_sim");
 }
@@ -59,7 +61,7 @@ int runServe(::cli::Context& context) {
         }
         options.config = std::move(*config);
     }
-    for (const char* key : {"image", "engine"}) {
+    for (const char* key : {"image", "symbols", "engine"}) {
         if (context.has(key)) {
             options.config.device[key] = context.stringOr(key, "");
         }
@@ -85,7 +87,12 @@ int runServe(::cli::Context& context) {
 
     std::unique_ptr<sys::DeviceServer> server;
     try {
-        server = std::make_unique<sys::DeviceServer>(options, std::make_unique<::sim::m150::M150Served>(image, *engine));
+        ::sim::m150::M150Options device;
+        device.image = image;
+        device.symbols = ::sim::m150::split_paths(options.config.device_value("symbols"));
+        device.engine = *engine;
+        device.allow_write = context.flag("allow-write");
+        server = std::make_unique<sys::DeviceServer>(options, std::make_unique<::sim::m150::M150Served>(device));
     } catch (const std::exception& e) {
         SPDLOG_ERROR("{}", e.what());
         return ::cli::kFailure;

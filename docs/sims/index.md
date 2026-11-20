@@ -25,3 +25,14 @@ Every simulator's `serve` is the same host (`sims/host`): its config binds each
 of the device's CAN ports to a bus, as `can_bridge` binds an adapter's
 channels. A device with one port takes a mapping (`can: {name: can0}`); one
 with several names them (`can: {CAN1: {name: can0}, CAN2: off}`).
+
+Every simulator also has the same debugger (`sims/host/debug`), reached through
+its agent methods and the MCP `sim_*` tools:
+- running and stepping: `run`, `step` (and over a call), `finish`;
+- stopping: breakpoints by function or address, watches on memory (stopping or recording), with conditions;
+- reading: values by name (registers, symbols at 8, 16 or 32 bits or as a float, addresses, and the device's own names), registers, disassembly from the same tables the CPU executes, a backtrace, memory;
+- snapshots of the whole device.
+
+A simulator provides a `DebugTarget` (its CPU's registers, memory, decoder,
+stack and snapshots); the debugger, the session and the methods are written
+once over it.

@@ -14,6 +14,7 @@
 
 #include "pdm32/board/boot_hle.h"
 #include "pdm32/config/current_cal.h"
+#include "pdm32/top/target.h"
 #include "hc08/image.h"
 
 namespace sim::sys {
@@ -84,7 +85,10 @@ void ExternalCanNode::send(CanBus& bus, const CanFrame& frame, uint64_t now) {
     bus.send(*this, frame, now);
 }
 
+Instance::~Instance() = default;
+
 Instance::Instance(InstanceConfig config) : cfg(std::move(config)), board(MachineConfig{.engine = cfg.engine}) {
+    target_ = std::make_unique<Pdm32Target>(*this);
     if (cfg.firmware_path.empty()) {
         cfg.firmware_path = default_firmware_path();
     }

@@ -174,6 +174,9 @@ struct CpuState {
 
     // Core cycles since reset: the core's only clock (one per instruction; the machine converts them to ticks).
     uint64_t cycles = 0;
+    // Instructions execute_insn has run: the interpreter's and the block engine's count, and the JIT's helper steps
+    // (its native code does not count). The debugger single-steps through the interpreter, where it is exact.
+    uint64_t instructions = 0;
     // The timebase at `tb_base_cycles` (it counts at the core clock while HID0[TBEN] is set).
     uint64_t tb_base = 0;
     uint64_t tb_base_cycles = 0;

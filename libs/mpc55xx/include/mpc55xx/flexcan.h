@@ -60,6 +60,8 @@ class FlexCan final : public e200::BusDevice, public sys::CanNode {
     }
     void sync(uint64_t now) override;
     void reset() override;
+    void save(std::vector<uint8_t>& out) const override;
+    void load(const uint8_t*& in) override;
 
    private:
     static uint32_t mb(int n) {

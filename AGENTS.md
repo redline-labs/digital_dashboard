@@ -505,7 +505,8 @@ libs/               reusable: dashboard_widgets (every widget under widgets/<nam
 sims/               emulators standing in for hardware, WORKSTATION ONLY:
   host/             what every `serve` is: the real-time/stepped loop, CAN
                     ports bridged onto zenoh, the serve config, agent-method
-                    plumbing; a device plugs in as a ServedDevice
+                    plumbing; a device plugs in as a ServedDevice. debug/ is
+                    the debugger every simulator shares, over a DebugTarget
   tools/            check_layers.py (each simulator's include direction)
   pdm32/            a MoTeC PDM32 (its firmware on libs/gz60), pdm32_sim
                     serve|run|images|disasm -- docs/sims/pdm32.md

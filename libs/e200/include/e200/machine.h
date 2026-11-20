@@ -15,6 +15,7 @@
 
 #include <array>
 #include <bitset>
+#include <functional>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -157,9 +158,26 @@ class Machine {
         limit_cycles_ = 0;
     }
 
+    // Exactly one instruction, through the interpreter (an interrupt due first is entered, a watched pc passed);
+    // asleep, time passes until the core wakes, at most `max_ticks`. `executed`: whether an instruction ran.
+    Stop step_instruction(uint64_t max_ticks, bool* executed);
+
     // pc watches (effective addresses)
     void watch_pc(uint32_t pc, bool on);
     void clear_pc_watches();
+
+    // Data watches on effective addresses: `fn(ea, value, is_write)` for each byte a load or store touches in
+    // [begin, end); true stops the run after the instruction (a Break). The watched pages are kept out of the
+    // software TLB, so every engine's accesses there take the checked path.
+    struct DataWatch {
+        uint32_t begin = 0;
+        uint32_t end = 0;  // exclusive
+        bool on_read = false;
+        bool on_write = true;
+        std::function<bool(uint32_t ea, uint8_t value, bool write)> fn;
+    };
+    int add_data_watch(DataWatch watch);
+    void remove_data_watch(int id);
     // Interrupt vectors that stop the run when taken (the debugger's catch): a Break after the entry.
     void catch_vector(Vector v, bool on);
 
@@ -171,6 +189,18 @@ class Machine {
     const EngineStatistics& stats() const {
         return stats_;
     }
+
+    // ---- snapshots: the core, every memory, every device (in the order they were added)
+    struct Snapshot {
+        CpuState state;
+        std::vector<std::vector<uint8_t>> memories;
+        std::vector<uint8_t> devices;
+        bool external = false;
+        bool critical = false;
+        bool waiting = false;
+    };
+    Snapshot snapshot() const;
+    void restore(const Snapshot& snapshot);
     // the JIT's counters (null until the JIT has run)
     const jit::JitStatistics* jit_stats() const {
         return jit_ ? &jit_->stats : nullptr;
@@ -282,6 +312,7 @@ class Machine {
 
     std::array<std::unique_ptr<PageBlock>, 4096> blocks_{};
     std::vector<std::unique_ptr<uint8_t[]>> storage_;
+    std::vector<uint32_t> storage_sizes_;
     std::vector<std::shared_ptr<sys::Timed>> devices_;
     sys::Schedule schedule_;
 
@@ -302,6 +333,11 @@ class Machine {
     bool exit_requested_ = false;
     bool break_requested_ = false;
     std::vector<uint32_t> pc_watches_;
+    std::vector<std::pair<int, DataWatch>> data_watches_;
+    int next_data_watch_ = 1;
+    bool watched_page(uint32_t ea) const;
+    void check_data_watch(uint32_t ea, unsigned size, uint32_t value, bool write);
+    void drop_decoded_code();
     uint64_t caught_vectors_ = 0;
     bool caught_ = false;
     EngineStatistics stats_;

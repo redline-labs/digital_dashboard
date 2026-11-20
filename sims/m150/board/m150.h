@@ -38,6 +38,8 @@ class Board {
     bool reset() {
         return soc.reset();
     }
+    // Power-on: the RAMs cleared (the flash keeps its image), then reset().
+    bool power_on();
 };
 
 }  // namespace sim::m150

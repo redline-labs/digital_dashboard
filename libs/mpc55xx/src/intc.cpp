@@ -1,6 +1,7 @@
 #include "mpc55xx/intc.h"
 
 #include "emu/model_gap.h"
+#include "emu/snapshot_io.h"
 
 namespace sim::mpc55xx {
 
@@ -18,6 +19,40 @@ void Intc::reset() {
     lifo_.clear();
     if (m) {
         m->set_external_input(false);
+    }
+}
+
+void Intc::save(std::vector<uint8_t>& out) const {
+    for (int s = 0; s < kSources; ++s) {
+        out.push_back(pending_.test(size_t(s)) ? 1 : 0);
+    }
+    out.insert(out.end(), psr_.begin(), psr_.end());
+    out.insert(out.end(), sscir_.begin(), sscir_.end());
+    sys::put_value(out, mcr_);
+    sys::put_value(out, cpr_);
+    sys::put_value(out, iackr_);
+    sys::put_value(out, uint32_t(lifo_.size()));
+    for (uint32_t v : lifo_) {
+        sys::put_value(out, v);
+    }
+}
+
+void Intc::load(const uint8_t*& in) {
+    for (int s = 0; s < kSources; ++s) {
+        pending_.set(size_t(s), *in++ != 0);
+    }
+    std::copy(in, in + psr_.size(), psr_.begin());
+    in += psr_.size();
+    std::copy(in, in + sscir_.size(), sscir_.begin());
+    in += sscir_.size();
+    sys::get_value(in, mcr_);
+    sys::get_value(in, cpr_);
+    sys::get_value(in, iackr_);
+    uint32_t n = 0;
+    sys::get_value(in, n);
+    lifo_.resize(n);
+    for (uint32_t& v : lifo_) {
+        sys::get_value(in, v);
     }
 }
 

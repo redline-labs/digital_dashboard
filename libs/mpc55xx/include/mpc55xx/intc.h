@@ -37,6 +37,8 @@ class Intc final : public e200::BusDevice, public sys::IrqSink {
     uint32_t peek(uint32_t offset, unsigned size) override;
     void write(uint32_t offset, unsigned size, uint32_t value) override;
     void reset() override;
+    void save(std::vector<uint8_t>& out) const override;
+    void load(const uint8_t*& in) override;
 
     uint32_t current_priority() const {
         return cpr_;

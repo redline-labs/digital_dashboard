@@ -20,7 +20,7 @@ from .supervisor import AppName, LaunchError, Supervisor
 APP_FIELD = Field(
     default=None,
     description=(
-        "Which app to target: 'dashboard', 'editor', 'scope', 'switchboard', or 'pdm32_sim' "
+        "Which app to target: 'dashboard', 'editor', 'scope', 'switchboard', 'pdm32_sim' or 'm150_sim' "
         "(the simulator, for app_logs/app_call/app_methods). Optional when only one app is "
         "running; a simulator is never the default. There is at most one instance of each type."
     ),
@@ -62,6 +62,12 @@ Drive it with the sim_* tools: sim_set_input / sim_set_load / sim_set_battery
 change what is wired to the connector, sim_read / sim_outputs / sim_signals
 read it back, sim_break / sim_watch debug the firmware. It runs in real time;
 add "--stepped" to extra_args for time that moves only on sim_run / sim_step.
+
+m150_sim runs an M1 application on an emulated MoTeC M150 (an MPC5554), its
+CAN1 on vehicle/can0. It needs a flash image built outside the tree
+(M150_IMAGE, or extra_args ["--image", path]) and, for names, the image's ELF
+files (extra_args ["--symbols", "kernel.elf,app.elf"]). The same sim_* debugger
+tools drive it, plus sim_console for its log; the connector tools are the PDM's.
 
 Launch a node when what you are looking at depends on it. A map widget with no
 map_server behind it draws its background and says "No reply from map_server",
@@ -1701,4 +1707,6 @@ def app_methods(app: Annotated[AppName | None, APP_FIELD] = None) -> str:
 
 # ------------------------------------------------------------------ simulators
 
-sim_tools.register(mcp, _call, _fail)
+sim_tools.register(
+    mcp, _call, _fail, lambda: [a["app"] for a in supervisor.list() if a["running"]]
+)

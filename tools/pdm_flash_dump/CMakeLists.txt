@@ -41,7 +41,7 @@ add_project_test(TARGET pdm_flash_dump_test_cal_header LABELS pdm_flash_dump uni
 
 # A whole dump against pdm32_sim serve over zenoh:. Skips without the firmware.
 add_executable(pdm_flash_dump_test_sim tests/test_sim.cpp)
-target_link_libraries(pdm_flash_dump_test_sim PRIVATE pdm_flash_dump_lib pdm32_sim_server can_zenoh spdlog::spdlog)
+target_link_libraries(pdm_flash_dump_test_sim PRIVATE pdm_flash_dump_lib pdm32_sim_core sim_host can_zenoh spdlog::spdlog)
 target_compile_definitions(pdm_flash_dump_test_sim PRIVATE PDM32_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/sims/pdm32/scenarios")
 add_project_test(TARGET pdm_flash_dump_test_sim LABELS pdm_flash_dump net slow
     ENVIRONMENT "PDM_FIRMWARE_HEX=${PDM_FIRMWARE_HEX}")

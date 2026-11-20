@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "host/control.h"
 #include "pdm32/top/probe.h"
 
 namespace sim::sys {

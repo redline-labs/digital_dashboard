@@ -36,6 +36,7 @@ Machine::Page& Machine::page_for_map(uint32_t pa) {
 
 uint8_t* Machine::map_ram(uint32_t base, uint32_t size) {
     storage_.push_back(std::make_unique<uint8_t[]>(size));
+    storage_sizes_.push_back(size);
     uint8_t* mem = storage_.back().get();
     std::memset(mem, 0, size);
     for (uint32_t off = 0; off < size; off += kPage) {
@@ -48,6 +49,7 @@ uint8_t* Machine::map_ram(uint32_t base, uint32_t size) {
 
 uint8_t* Machine::map_rom(uint32_t base, uint32_t size, BusDevice* controller) {
     storage_.push_back(std::make_unique<uint8_t[]>(size));
+    storage_sizes_.push_back(size);
     uint8_t* mem = storage_.back().get();
     std::memset(mem, 0xFF, size);  // erased flash
     for (uint32_t off = 0; off < size; off += kPage) {
@@ -166,7 +168,8 @@ Fault Machine::translate(uint32_t ea, Access access, uint32_t* pa, SoftTlbEntry*
     if (f != Fault::None) {
         return f;
     }
-    if (fill && state.tlb1[size_t(entry)].size() >= kPage) {
+    if (fill && state.tlb1[size_t(entry)].size() >= kPage &&
+        !(access != Access::Execute && !data_watches_.empty() && watched_page(ea))) {
         Page* p = page(*pa);
         uint8_t* h = nullptr;
         if (p) {
@@ -218,13 +221,15 @@ Fault Machine::load_slow(uint32_t ea, unsigned size, uint32_t* value) {
     Page* p = page(pa);
     if (p && p->read) {
         *value = load_be(p->read + (pa & 0xFFF), size);
-        return Fault::None;
-    }
-    if (p && p->device) {
+    } else if (p && p->device) {
         *value = device_read(*p, pa, size);
-        return Fault::None;
+    } else {
+        return Fault::Bus;
     }
-    return Fault::Bus;
+    if (!data_watches_.empty()) {
+        check_data_watch(ea, size, *value, false);
+    }
+    return Fault::None;
 }
 
 Fault Machine::store_slow(uint32_t ea, unsigned size, uint32_t value) {
@@ -250,6 +255,9 @@ Fault Machine::store_slow(uint32_t ea, unsigned size, uint32_t value) {
     }
     if (state.reserved && (state.reservation & ~3u) == (ea & ~3u)) {
         state.reserved = false;
+    }
+    if (!data_watches_.empty()) {
+        check_data_watch(ea, size, value, true);
     }
     Page* p = page(pa);
     if (p && p->write) {
@@ -433,11 +441,7 @@ bool Machine::poke(uint32_t ea, unsigned size, uint32_t value) {
 
 // ------------------------------------------------------------------------------------------- running
 
-void Machine::reset() {
-    reset_core(state);
-    for (const auto& d : devices_) {
-        d->reset();
-    }
+void Machine::drop_decoded_code() {
     code_.clear();
     code_pages_.reset();
     if (jit_) {
@@ -446,6 +450,14 @@ void Machine::reset() {
     }
     last_code_page_ = ~0u;
     last_code_ = nullptr;
+}
+
+void Machine::reset() {
+    reset_core(state);
+    for (const auto& d : devices_) {
+        d->reset();
+    }
+    drop_decoded_code();
     tlb_seen_ = state.tlb1;
     pid_seen_ = 0;
     flush_soft_tlbs();
@@ -646,6 +658,100 @@ Stop Machine::run_until(uint64_t until) {
     }
     schedule_.sync_due(state.cycles);
     return Stop{StopKind::Limit, state.pc, 0};
+}
+
+// ------------------------------------------------------------------------------------------- debugging
+
+bool Machine::watched_page(uint32_t ea) const {
+    const uint32_t page_start = ea & ~0xFFFu;
+    for (const auto& [id, w] : data_watches_) {
+        if (w.begin < page_start + kPage && w.end > page_start) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void Machine::check_data_watch(uint32_t ea, unsigned size, uint32_t value, bool write) {
+    for (unsigned k = 0; k < size; ++k) {
+        const uint32_t a = ea + k;
+        const uint8_t byte = uint8_t(value >> (8 * (size - 1 - k)));
+        for (auto& [id, w] : data_watches_) {
+            if (a < w.begin || a >= w.end || (write ? !w.on_write : !w.on_read)) {
+                continue;
+            }
+            if (w.fn && w.fn(a, byte, write)) {
+                request_break();  // after this instruction
+            }
+        }
+    }
+}
+
+int Machine::add_data_watch(DataWatch watch) {
+    const int id = next_data_watch_++;
+    data_watches_.push_back({id, std::move(watch)});
+    flush_soft_tlbs();  // the watched pages leave the fast path
+    return id;
+}
+
+void Machine::remove_data_watch(int id) {
+    std::erase_if(data_watches_, [id](const auto& w) { return w.first == id; });
+    flush_soft_tlbs();
+}
+
+Stop Machine::step_instruction(uint64_t max_ticks, bool* executed) {
+    const Engine saved = cfg.engine;
+    cfg.engine = Engine::Interpreter;
+    const uint64_t before = state.instructions;
+    const uint64_t give_up = now() + max_ticks;
+    Stop stop{StopKind::Limit, state.pc, 0};
+    while (state.instructions == before && now() < give_up) {
+        stop = run_until(now() + 1);
+        if (stop.kind == StopKind::Watch) {
+            state.skip_watch_pc = stop.pc;  // a step passes a watched pc
+            continue;
+        }
+        if (stop.kind != StopKind::Limit && stop.kind != StopKind::Wait && stop.kind != StopKind::None) {
+            break;
+        }
+    }
+    cfg.engine = saved;
+    *executed = state.instructions != before;
+    return stop;
+}
+
+Machine::Snapshot Machine::snapshot() const {
+    Snapshot s;
+    s.state = state;
+    for (size_t k = 0; k < storage_.size(); ++k) {
+        s.memories.emplace_back(storage_[k].get(), storage_[k].get() + storage_sizes_[k]);
+    }
+    for (const auto& d : devices_) {
+        d->save(s.devices);
+    }
+    s.external = external_;
+    s.critical = critical_;
+    s.waiting = waiting_;
+    return s;
+}
+
+void Machine::restore(const Snapshot& s) {
+    state = s.state;
+    for (size_t k = 0; k < storage_.size() && k < s.memories.size(); ++k) {
+        std::memcpy(storage_[k].get(), s.memories[k].data(), std::min<size_t>(storage_sizes_[k], s.memories[k].size()));
+    }
+    const uint8_t* p = s.devices.data();
+    for (const auto& d : devices_) {
+        d->load(p);
+    }
+    external_ = s.external;
+    critical_ = s.critical;
+    waiting_ = s.waiting;
+    drop_decoded_code();
+    tlb_seen_ = state.tlb1;
+    pid_seen_ = state.pid0;
+    flush_soft_tlbs();
+    select_soft_tlb();
 }
 
 }  // namespace sim::e200

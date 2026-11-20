@@ -1,0 +1,4 @@
+# The simulator's bus for the MCP tests: off vehicle/can0, so a test run never
+# appears on a bench's topics.
+can:
+  CAN1: {name: mcp_test, rx_key: test/redline_mcp/m150/rx, tx_key: test/redline_mcp/m150/tx}

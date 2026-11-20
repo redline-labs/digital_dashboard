@@ -73,7 +73,9 @@ int main() {
         channel_name = m.getChannel();
     });
 
-    DeviceServer server(options, std::make_unique<sim::m150::M150Served>(image, sim::e200::Engine::Jit));
+    sim::m150::M150Options device;
+    device.image = image;
+    DeviceServer server(options, std::make_unique<sim::m150::M150Served>(device));
     std::atomic<bool> ready{false};
     std::thread loop([&] { server.run([&] { ready = true; }); });
     while (!ready) {

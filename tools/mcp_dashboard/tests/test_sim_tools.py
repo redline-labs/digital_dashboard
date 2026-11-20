@@ -55,7 +55,7 @@ def j(text: str):
 
 def test_no_simulator_is_said_plainly():
     srv.supervisor.shutdown()
-    assert sim.sim_status().startswith("LaunchError: No pdm32_sim is running")
+    assert sim.sim_status().startswith("LaunchError: No simulator is running")
 
 
 @needs_sim
@@ -96,3 +96,59 @@ def test_a_simulator_is_never_the_default_app(stepped):
     assert info["app"] == "pdm32_sim" and info["time"] == "stepped"
     logs = j(srv.app_logs(app="pdm32_sim", grep="firmware"))
     assert logs["records"]
+
+
+# ---------------------------------------------------------------------------- m150_sim
+
+M150_IMAGE = os.environ.get("M150_IMAGE", "")
+M150_SYMBOLS = os.environ.get("M150_SYMBOLS", "")
+
+
+def _m150_built() -> bool:
+    try:
+        binary_for("m150_sim")
+    except LaunchError:
+        return False
+    return True
+
+
+needs_m150 = pytest.mark.skipif(
+    not _m150_built() or not M150_IMAGE or not Path(M150_IMAGE).exists() or not M150_SYMBOLS,
+    reason="m150_sim not built, or no M150_IMAGE / M150_SYMBOLS",
+)
+
+
+@pytest.fixture
+def m150_stepped():
+    srv.supervisor.launch(
+        "m150_sim",
+        extra_args=[
+            "--stepped",
+            "--image", M150_IMAGE,
+            "--symbols", M150_SYMBOLS,
+            "-c", str(Path(__file__).with_name("m150_test.yaml")),
+        ],
+    )
+    yield
+    srv.supervisor.quit("m150_sim")
+
+
+@needs_m150
+def test_m150_the_same_debugger_tools(m150_stepped):
+    # the tools find the one simulator running
+    assert j(sim.sim_status())["engine"] == "jit"
+    bp = j(sim.sim_break(function="fw_main"))["id"]
+    stop = j(sim.sim_run(seconds=1.0))
+    assert stop["reason"] == "break" and stop["where"] == "fw_main" and stop["id"] == bp
+    regs = j(sim.sim_registers())
+    assert regs["pc"] == stop["pc"] and "r31" in regs
+    assert j(sim.sim_disasm(count=1))[0]["text"] == "stwu r1,-64(r1)"
+    assert any(f["where"].startswith("main+") for f in j(sim.sim_backtrace()))
+    j(sim.sim_clear())
+    assert j(sim.sim_step(count=3))["reason"] == "step"
+    j(sim.sim_break(function="ltc_init"))
+    assert j(sim.sim_run(seconds=0.1))["where"] == "ltc_init"
+    j(sim.sim_clear())
+    assert j(sim.sim_finish())["where"].startswith("fw_main+")
+    assert any("M150 MVP kernel" in line for line in j(sim.sim_console())["lines"])
+    assert sim.sim_write("r3", 1).startswith("BAD_PARAMS")  # registers need --allow-write
